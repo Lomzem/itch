@@ -52,6 +52,16 @@ _Avoid_: owner, master
 Forcibly moving a Lease from its Holder to another client.
 _Avoid_: steal, break lock
 
+## Identity
+
+**Label**:
+A Rig's changeable, human-readable name, stored on the Rig and used to pick it from a script; defaults to `itch-` plus the last three bytes of its Hardware ID.
+_Avoid_: name, hostname, alias
+
+**Hardware ID**:
+A Rig's fixed factory MAC address, also reported as its USB serial number (e.g. `60:55:F9:C0:27:18`).
+_Avoid_: serial, MAC, UID
+
 ## Semantics
 
 **Profile**:
