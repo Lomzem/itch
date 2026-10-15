@@ -1,0 +1,5 @@
+# Hand-written fixed binary payloads
+
+Inside each TAFP frame, messages use a hand-written, fixed little-endian binary layout specified as byte tables in `docs/protocol/`, rather than Protocol Buffers, CBOR or another schema/codegen format. Protobuf (`micropb` + generated Python) was the leading alternative because one `.proto` would feed both sides. We rejected it because its main strength, additive evolution, goes unused: a single `protocol` integer is bumped on any change, and Rigs and clients are updated together (an internal tool on the QA engineer's bench, ADR 0004). About a dozen small fixed-shape messages don't justify a runtime dependency in `itch-py` and a codegen step in both repos.
+
+The cost is two hand-written codecs, firmware and `itch-py`, that can drift. Each message in the spec carries a hex example that both test suites must reproduce, and decoding is strict (exact sizes, no trailing bytes, valid enums and UTF-8, otherwise `Malformed`), so a mismatch shows up on the first message.
