@@ -16,7 +16,7 @@ The Rig speaks one framed byte stream, the same over every transport:
 - **USB:** the ESP32-S3's native USB Serial/JTAG port (VID `0x303A`, PID `0x1001`). The USB serial number is the Rig's Hardware ID. This is how QA reach a Rig.
 - **TCP:** `itch-sim`, and firmware built with the `wifi` feature (development only, see ADR 0003). One TCP connection is one stream.
 
-The Rig can't see connection boundaries over USB, so it keeps no per-connection state that a client depends on. `Hello` is optional on the wire, but clients should send it first.
+The Rig can't see connection boundaries over USB, so `Hello` is optional on the wire. Clients should still send it first on every connection.
 
 ## Framing
 
@@ -134,7 +134,7 @@ Top level:
 | `frames` | Frame vectors: a payload and its complete TAFP frame |
 | `streams` | Decoder vectors: a byte stream and what a receiver gets from it |
 
-Every case has a unique `name`.
+Every case has a `name`, unique within its section.
 
 **`messages`:** `{ "name", "message", "payload" }`. `message` is an object:
 
