@@ -1,10 +1,11 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
-use itch_core::wire::{HelloReply, Message, Reply, Request, Response};
+use itch_core::rig::SETTLE_MS;
+use itch_core::wire::{HelloReply, Message, Reply, Request, Response, WriteChannels};
 
 #[test]
 fn answers_hello_over_tcp() {
@@ -23,6 +24,17 @@ fn serves_several_connections_at_once() {
     let mut other = sim.connect();
     hello(&mut other, 1);
     hello(&mut idle, 2);
+}
+
+#[test]
+fn a_write_replies_after_the_contacts_settle() {
+    let sim = Sim::start();
+    let mut stream = sim.connect();
+    let write = WriteChannels { token: 1, mask: 0x8001, values: 0x8001 };
+    let started = Instant::now();
+    let reply = exchange(&mut stream, 3, Request::WriteChannels(write));
+    assert!(started.elapsed() >= Duration::from_millis(SETTLE_MS));
+    assert_eq!(reply, Response::Ok(Reply::WriteChannels { state: 0x8001 }));
 }
 
 struct Sim {
@@ -55,8 +67,16 @@ impl Drop for Sim {
 }
 
 fn hello(stream: &mut TcpStream, request_id: u32) -> HelloReply<'static> {
+    match exchange(stream, request_id, Request::Hello) {
+        Response::Ok(Reply::Hello(hello)) => hello,
+        other => panic!("not a Hello reply: {other:?}"),
+    }
+}
+
+/// Sends `request` and returns the response to it.
+fn exchange(stream: &mut TcpStream, request_id: u32, request: Request) -> Response<'static> {
     let mut payload = [0; MAX_PAYLOAD];
-    let len = Message::Request { request_id, request: Request::Hello }.encode(&mut payload);
+    let len = Message::Request { request_id, request }.encode(&mut payload);
     let mut frame = [0; MAX_FRAME];
     let len = encode_frame(&payload[..len], &mut frame);
     stream.write_all(&frame[..len]).unwrap();
@@ -70,11 +90,7 @@ fn hello(stream: &mut TcpStream, request_id: u32) -> HelloReply<'static> {
         }
     };
     match Message::decode(reply) {
-        Ok(Message::Response { request_id: id, response: Response::Ok(Reply::Hello(hello)) })
-            if id == request_id =>
-        {
-            hello
-        }
-        other => panic!("not a Hello reply: {other:?}"),
+        Ok(Message::Response { request_id: id, response }) if id == request_id => response,
+        other => panic!("not a response to {request_id}: {other:?}"),
     }
 }
