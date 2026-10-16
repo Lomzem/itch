@@ -39,6 +39,37 @@
         "detail": "queue full"
       },
       "payload": "81 78 56 34 12 07 0a 71 75 65 75 65 20 66 75 6c 6c"
+    },
+    {
+      "name": "set-log-level-request",
+      "message": {
+        "kind": "request",
+        "type": "SetLogLevel",
+        "request_id": 305419896,
+        "level": 3
+      },
+      "payload": "07 78 56 34 12 03"
+    },
+    {
+      "name": "set-log-level-ok",
+      "message": {
+        "kind": "response",
+        "type": "SetLogLevel",
+        "request_id": 305419896,
+        "status": "Ok"
+      },
+      "payload": "87 78 56 34 12 00"
+    },
+    {
+      "name": "log-event",
+      "message": {
+        "kind": "event",
+        "type": "Log",
+        "level": 2,
+        "dropped": 3,
+        "text": "label set to caf\u00e9"
+      },
+      "payload": "40 02 03 00 00 00 6c 61 62 65 6c 20 73 65 74 20 74 6f 20 63 61 66 c3 a9"
     }
   ],
   "frames": [

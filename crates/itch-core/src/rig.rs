@@ -2,7 +2,7 @@ use crate::board::Board;
 use crate::frame::MAX_PAYLOAD;
 use crate::label::Label;
 use crate::wire::{
-    CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, Message, PROTOCOL, Reply, Request,
+    CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, LogLevel, Message, PROTOCOL, Reply, Request,
     RequestType, Response,
 };
 
@@ -14,6 +14,9 @@ pub enum Handled {
     /// Send the first `len` bytes of the reply buffer, after waiting out relay
     /// settling if `settle` is set.
     Reply { len: usize, settle: bool },
+    /// Set the calling connection's log level to `level`, then send the
+    /// first `len` bytes of the reply buffer.
+    SetLogLevel { len: usize, level: LogLevel },
 }
 
 /// The Rig's protocol logic. It does no I/O: the transport feeds it decoded
@@ -60,11 +63,19 @@ impl Rig {
                 let response = Response::Ok(Reply::Hello(hello));
                 Message::Response { request_id, response }.encode(reply)
             }
+            Ok(Request::SetLogLevel { level }) => {
+                let response = Response::Ok(Reply::SetLogLevel);
+                let len = Message::Response { request_id, response }.encode(reply);
+                return Handled::SetLogLevel { len, level };
+            }
             Err(error) => {
                 let error = match error {
                     DecodeError::Malformed => ErrorCode::Malformed,
                     DecodeError::UnknownType => ErrorCode::UnknownRequest,
                 };
+                log::warn!(
+                    "answered request {request_id} (type {request_type:#04x}) with {error:?}"
+                );
                 let response = Response::Err { request_type, error, detail: "" };
                 Message::Response { request_id, response }.encode(reply)
             }

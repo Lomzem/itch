@@ -4,9 +4,12 @@
 
 mod codec;
 mod hello;
+mod log;
 
 use codec::{Reader, Writer};
 pub use hello::{FEATURE_WIFI, HelloReply};
+pub(crate) use log::encode_header as encode_log_header;
+pub use log::{LogEvent, LogLevel, MAX_LOG_TEXT};
 
 /// Bumped on any message change. Clients require an exact match.
 pub const PROTOCOL: u16 = 1;
@@ -25,12 +28,14 @@ const STATUS_OK: u8 = 0;
 #[repr(u8)]
 pub enum RequestType {
     Hello = 0x01,
+    SetLogLevel = 0x07,
 }
 
 impl RequestType {
     pub fn from_u8(value: u8) -> Option<Self> {
         match value {
             0x01 => Some(Self::Hello),
+            0x07 => Some(Self::SetLogLevel),
             _ => None,
         }
     }
@@ -83,11 +88,13 @@ pub enum DecodeError {
 pub enum Message<'a> {
     Request { request_id: u32, request: Request },
     Response { request_id: u32, response: Response<'a> },
+    Event(Event<'a>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Request {
     Hello,
+    SetLogLevel { level: LogLevel },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +112,13 @@ pub enum Response<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reply<'a> {
     Hello(HelloReply<'a>),
+    SetLogLevel,
+}
+
+/// An unsolicited message from the Rig. Clients ignore Event types they don't know.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Event<'a> {
+    Log(LogEvent<'a>),
 }
 
 impl<'a> Message<'a> {
@@ -132,6 +146,7 @@ impl<'a> Message<'a> {
                 w.u8(*error as u8);
                 w.text(detail);
             }
+            Message::Event(Event::Log(log)) => log.encode(&mut w),
         }
         w.len()
     }
@@ -141,7 +156,10 @@ impl<'a> Message<'a> {
         let message_type = r.u8()?;
         if message_type & RESPONSE_BIT == 0 {
             if message_type >= FIRST_EVENT_TYPE {
-                return Err(DecodeError::UnknownType);
+                if message_type != log::LOG_EVENT_TYPE {
+                    return Err(DecodeError::UnknownType);
+                }
+                return Ok(Message::Event(Event::Log(LogEvent::decode(&mut r)?)));
             }
             let request_id = r.u32()?;
             let request_type =
@@ -172,22 +190,25 @@ impl Request {
     pub fn request_type(&self) -> RequestType {
         match self {
             Request::Hello => RequestType::Hello,
+            Request::SetLogLevel { .. } => RequestType::SetLogLevel,
         }
     }
 
     /// Decodes a request body, the bytes after `request_id`.
     pub fn decode(request_type: RequestType, body: &[u8]) -> Result<Self, DecodeError> {
-        let r = Reader::new(body);
+        let mut r = Reader::new(body);
         let request = match request_type {
             RequestType::Hello => Request::Hello,
+            RequestType::SetLogLevel => Request::SetLogLevel { level: LogLevel::decode(&mut r)? },
         };
         r.finish()?;
         Ok(request)
     }
 
-    fn encode_body(&self, _w: &mut Writer) {
+    fn encode_body(&self, w: &mut Writer) {
         match self {
             Request::Hello => {}
+            Request::SetLogLevel { level } => w.u8(*level as u8),
         }
     }
 }
@@ -196,18 +217,21 @@ impl<'a> Reply<'a> {
     pub fn request_type(&self) -> RequestType {
         match self {
             Reply::Hello(_) => RequestType::Hello,
+            Reply::SetLogLevel => RequestType::SetLogLevel,
         }
     }
 
     fn decode(request_type: RequestType, r: &mut Reader<'a>) -> Result<Self, DecodeError> {
         Ok(match request_type {
             RequestType::Hello => Reply::Hello(HelloReply::decode(r)?),
+            RequestType::SetLogLevel => Reply::SetLogLevel,
         })
     }
 
     fn encode_body(&self, w: &mut Writer) {
         match self {
             Reply::Hello(hello) => hello.encode(w),
+            Reply::SetLogLevel => {}
         }
     }
 }

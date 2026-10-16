@@ -9,4 +9,5 @@ publish = false
 
 [workspace.dependencies]
 itch-core = { path = "crates/itch-core" }
+log = "0.4.34"
 serde_json = "1"
