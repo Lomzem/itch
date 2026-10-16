@@ -3,5 +3,6 @@
 pub mod board;
 pub mod frame;
 mod label;
+pub mod logs;
 pub mod rig;
 pub mod wire;

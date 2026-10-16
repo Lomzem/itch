@@ -61,7 +61,7 @@ pub struct LogEvent<'a> {
 
 impl<'a> LogEvent<'a> {
     pub(crate) fn encode(&self, w: &mut Writer) {
-        encode_header(w, self.level, self.dropped);
+        write_header(w, self.level, self.dropped);
         w.bytes(self.text.as_bytes());
     }
 
@@ -76,8 +76,15 @@ impl<'a> LogEvent<'a> {
     }
 }
 
-/// Everything before the text, which callers append themselves.
-pub(crate) fn encode_header(w: &mut Writer, level: LogLevel, dropped: u32) {
+/// Writes everything before the text into `out` and returns its length, so
+/// callers can append text they hold elsewhere.
+pub(crate) fn encode_header(out: &mut [u8], level: LogLevel, dropped: u32) -> usize {
+    let mut w = Writer::new(out);
+    write_header(&mut w, level, dropped);
+    w.len()
+}
+
+fn write_header(w: &mut Writer, level: LogLevel, dropped: u32) {
     w.u8(LOG_EVENT_TYPE);
     w.u8(level as u8);
     w.u32(dropped);
