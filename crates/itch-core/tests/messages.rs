@@ -3,8 +3,8 @@ mod common;
 use common::{cases, hex, vectors};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::wire::{
-    AcquireLease, ErrorCode, HelloReply, Message, RenewLease, Reply, Request, RequestType,
-    Response, WriteChannels,
+    AcquireLease, ErrorCode, HelloReply, Message, PROTOCOL, RenewLease, Reply, Request,
+    RequestType, Response, WriteChannels,
 };
 use serde_json::Value;
 
@@ -23,6 +23,12 @@ fn decoding_a_vector_payload_produces_the_message() {
         let payload = hex(case["payload"].as_str().unwrap());
         assert_eq!(Message::decode(&payload), Ok(message(&case["message"])), "{}", case["name"]);
     }
+}
+
+/// The release manifest reads the `protocol` from the vectors.
+#[test]
+fn the_vectors_are_for_this_protocol() {
+    assert_eq!(vectors()["protocol"], PROTOCOL);
 }
 
 /// Builds the message a vector describes. See "Conformance vectors" in
