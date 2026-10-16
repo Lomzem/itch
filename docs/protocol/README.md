@@ -2,7 +2,7 @@
 
 This folder is the source of truth for the protocol between a Rig (or `itch-sim`) and its clients. A client can be written from these files alone.
 
-- `README.md` (this file): transports, framing, the message header, field types, ordering and versioning.
+- `README.md` (this file): transports, framing, the message header, field types, ordering, the Lease and versioning.
 - [`messages.md`](messages.md): a byte table and hex example per message.
 - [`errors.md`](errors.md): error codes, log levels and counters.
 - [`vectors-v1.json`](vectors-v1.json): the conformance vectors that every codec must reproduce. Every ` ```hex ` block in these docs is checked against it.
@@ -108,6 +108,18 @@ Every message has an exact layout. The Rig answers `Malformed` (with the `reques
 The Rig processes requests in order and replies in order. The one exception is `Busy`, which the transport sends at once when the Rig's request queue is full, so it may overtake replies still queued. Clients match replies by `request_id`. Clients may pipeline requests; `itch-py` sends one at a time.
 
 Every change sets an absolute state, so retrying a request is safe. The Rig keeps no `request_id` history, and a client retries with a fresh `request_id`.
+
+## Lease
+
+A Rig has one Lease, which lets one client change its Channels. It belongs to a token, not to a connection or a transport. The Rig sets its lifetime and reports it in `AcquireLease` (`ttl_ms`, 10 s), and the client keeps it alive with `RenewLease`.
+
+- **Token-bearing requests** are `WriteChannels`, `Clear`, `AcquireLease` and `RenewLease`. Token 0 means "no token", and such a request gets `LeaseRequired`.
+- A request with the token that holds the Lease proceeds and renews it.
+- A token-bearing request to a free Rig claims the Lease and proceeds.
+- A retried `AcquireLease` with the current token succeeds.
+- `ReleaseLease` frees the Rig. A token that doesn't hold the Lease makes it a no-op success.
+- Reads (`Hello`, `GetChannels`) carry no token and neither need nor renew the Lease.
+- Releasing the Lease leaves the Channels as they are. Only a reboot Clears them.
 
 ## Versioning
 
