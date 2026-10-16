@@ -94,7 +94,11 @@ pub enum Request {
 pub enum Response<'a> {
     Ok(Reply<'a>),
     /// `request_type` is the raw type byte, so an unknown request can be echoed.
-    Err { request_type: u8, error: ErrorCode, detail: &'a str },
+    Err {
+        request_type: u8,
+        error: ErrorCode,
+        detail: &'a str,
+    },
 }
 
 /// The result body of an ok response.
@@ -140,7 +144,8 @@ impl<'a> Message<'a> {
                 return Err(DecodeError::UnknownType);
             }
             let request_id = r.u32()?;
-            let request_type = RequestType::from_u8(message_type).ok_or(DecodeError::UnknownType)?;
+            let request_type =
+                RequestType::from_u8(message_type).ok_or(DecodeError::UnknownType)?;
             let request = Request::decode(request_type, r.rest())?;
             return Ok(Message::Request { request_id, request });
         }

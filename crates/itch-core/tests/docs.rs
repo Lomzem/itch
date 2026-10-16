@@ -15,9 +15,7 @@ fn every_hex_block_in_the_protocol_docs_matches_a_vector() {
     ]
     .iter()
     .flat_map(|&(section, field)| {
-        cases(&vectors, section)
-            .iter()
-            .map(move |case| hex(case[field].as_str().unwrap()))
+        cases(&vectors, section).iter().map(move |case| hex(case[field].as_str().unwrap()))
     })
     .collect();
 
@@ -28,11 +26,7 @@ fn every_hex_block_in_the_protocol_docs_matches_a_vector() {
             continue;
         }
         for block in hex_blocks(&std::fs::read_to_string(&path).unwrap()) {
-            assert!(
-                known.contains(&hex(&block)),
-                "{}: no vector matches\n{block}",
-                path.display()
-            );
+            assert!(known.contains(&hex(&block)), "{}: no vector matches\n{block}", path.display());
             checked += 1;
         }
     }

@@ -26,12 +26,8 @@ fn decoder_resyncs_drops_bad_frames_and_counts_them() {
         let name = &case["name"];
         let mut decoder = FrameDecoder::new();
         let payloads = feed(&mut decoder, &hex(case["stream"].as_str().unwrap()));
-        let expected: Vec<_> = case["payloads"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|p| hex(p.as_str().unwrap()))
-            .collect();
+        let expected: Vec<_> =
+            case["payloads"].as_array().unwrap().iter().map(|p| hex(p.as_str().unwrap())).collect();
         assert_eq!(payloads, expected, "{name}");
         let counters = decoder.counters();
         assert_eq!(counters.crc_failures, case["crc_failures"], "{name}");
