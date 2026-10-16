@@ -2,11 +2,15 @@
 //! out in `docs/protocol/`. Decoding is strict: exact sizes, no trailing
 //! bytes, valid bools, enums and UTF-8.
 
+mod channels;
 mod codec;
 mod hello;
+mod lease;
 
+pub use channels::WriteChannels;
 use codec::{Reader, Writer};
 pub use hello::{FEATURE_WIFI, HelloReply};
+pub use lease::{AcquireLease, RenewLease};
 
 /// Bumped on any message change. Clients require an exact match.
 pub const PROTOCOL: u16 = 1;
@@ -25,14 +29,27 @@ const STATUS_OK: u8 = 0;
 #[repr(u8)]
 pub enum RequestType {
     Hello = 0x01,
+    GetChannels = 0x02,
+    WriteChannels = 0x03,
+    Clear = 0x04,
+    AcquireLease = 0x08,
+    RenewLease = 0x09,
+    ReleaseLease = 0x0A,
 }
 
 impl RequestType {
     pub fn from_u8(value: u8) -> Option<Self> {
-        match value {
-            0x01 => Some(Self::Hello),
-            _ => None,
-        }
+        use RequestType::*;
+        Some(match value {
+            0x01 => Hello,
+            0x02 => GetChannels,
+            0x03 => WriteChannels,
+            0x04 => Clear,
+            0x08 => AcquireLease,
+            0x09 => RenewLease,
+            0x0A => ReleaseLease,
+            _ => return None,
+        })
     }
 }
 
@@ -81,13 +98,19 @@ pub enum DecodeError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Message<'a> {
-    Request { request_id: u32, request: Request },
+    Request { request_id: u32, request: Request<'a> },
     Response { request_id: u32, response: Response<'a> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Request {
+pub enum Request<'a> {
     Hello,
+    GetChannels,
+    WriteChannels(WriteChannels),
+    Clear { token: u64 },
+    AcquireLease(AcquireLease<'a>),
+    RenewLease(RenewLease<'a>),
+    ReleaseLease { token: u64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,6 +128,23 @@ pub enum Response<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reply<'a> {
     Hello(HelloReply<'a>),
+    /// The commanded state, bit 0 = CH1.
+    GetChannels {
+        state: u16,
+    },
+    /// The state after settling.
+    WriteChannels {
+        state: u16,
+    },
+    /// The state after settling.
+    Clear {
+        state: u16,
+    },
+    AcquireLease {
+        ttl_ms: u32,
+    },
+    RenewLease,
+    ReleaseLease,
 }
 
 impl<'a> Message<'a> {
@@ -168,26 +208,42 @@ impl<'a> Message<'a> {
     }
 }
 
-impl Request {
+impl<'a> Request<'a> {
     pub fn request_type(&self) -> RequestType {
         match self {
             Request::Hello => RequestType::Hello,
+            Request::GetChannels => RequestType::GetChannels,
+            Request::WriteChannels(_) => RequestType::WriteChannels,
+            Request::Clear { .. } => RequestType::Clear,
+            Request::AcquireLease(_) => RequestType::AcquireLease,
+            Request::RenewLease(_) => RequestType::RenewLease,
+            Request::ReleaseLease { .. } => RequestType::ReleaseLease,
         }
     }
 
     /// Decodes a request body, the bytes after `request_id`.
-    pub fn decode(request_type: RequestType, body: &[u8]) -> Result<Self, DecodeError> {
-        let r = Reader::new(body);
+    pub fn decode(request_type: RequestType, body: &'a [u8]) -> Result<Self, DecodeError> {
+        let mut r = Reader::new(body);
         let request = match request_type {
             RequestType::Hello => Request::Hello,
+            RequestType::GetChannels => Request::GetChannels,
+            RequestType::WriteChannels => Request::WriteChannels(WriteChannels::decode(&mut r)?),
+            RequestType::Clear => Request::Clear { token: r.u64()? },
+            RequestType::AcquireLease => Request::AcquireLease(AcquireLease::decode(&mut r)?),
+            RequestType::RenewLease => Request::RenewLease(RenewLease::decode(&mut r)?),
+            RequestType::ReleaseLease => Request::ReleaseLease { token: r.u64()? },
         };
         r.finish()?;
         Ok(request)
     }
 
-    fn encode_body(&self, _w: &mut Writer) {
+    fn encode_body(&self, w: &mut Writer) {
         match self {
-            Request::Hello => {}
+            Request::Hello | Request::GetChannels => {}
+            Request::WriteChannels(write) => write.encode(w),
+            Request::Clear { token } | Request::ReleaseLease { token } => w.u64(*token),
+            Request::AcquireLease(acquire) => acquire.encode(w),
+            Request::RenewLease(renew) => renew.encode(w),
         }
     }
 }
@@ -196,18 +252,35 @@ impl<'a> Reply<'a> {
     pub fn request_type(&self) -> RequestType {
         match self {
             Reply::Hello(_) => RequestType::Hello,
+            Reply::GetChannels { .. } => RequestType::GetChannels,
+            Reply::WriteChannels { .. } => RequestType::WriteChannels,
+            Reply::Clear { .. } => RequestType::Clear,
+            Reply::AcquireLease { .. } => RequestType::AcquireLease,
+            Reply::RenewLease => RequestType::RenewLease,
+            Reply::ReleaseLease => RequestType::ReleaseLease,
         }
     }
 
     fn decode(request_type: RequestType, r: &mut Reader<'a>) -> Result<Self, DecodeError> {
         Ok(match request_type {
             RequestType::Hello => Reply::Hello(HelloReply::decode(r)?),
+            RequestType::GetChannels => Reply::GetChannels { state: r.u16()? },
+            RequestType::WriteChannels => Reply::WriteChannels { state: r.u16()? },
+            RequestType::Clear => Reply::Clear { state: r.u16()? },
+            RequestType::AcquireLease => Reply::AcquireLease { ttl_ms: r.u32()? },
+            RequestType::RenewLease => Reply::RenewLease,
+            RequestType::ReleaseLease => Reply::ReleaseLease,
         })
     }
 
     fn encode_body(&self, w: &mut Writer) {
         match self {
             Reply::Hello(hello) => hello.encode(w),
+            Reply::GetChannels { state }
+            | Reply::WriteChannels { state }
+            | Reply::Clear { state } => w.u16(*state),
+            Reply::AcquireLease { ttl_ms } => w.u32(*ttl_ms),
+            Reply::RenewLease | Reply::ReleaseLease => {}
         }
     }
 }
