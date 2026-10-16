@@ -7,7 +7,57 @@ pub use fake_board::FakeBoard;
 
 use std::path::PathBuf;
 
+use itch_core::frame::MAX_PAYLOAD;
+use itch_core::rig::{Handled, Rig};
+use itch_core::wire::{ErrorCode, Message, Reply, Request, Response};
 use serde_json::Value;
+
+/// A Rig on a `FakeBoard`, kept across requests.
+pub struct TestRig {
+    pub rig: Rig,
+    pub board: FakeBoard,
+    /// Whether the last reply waited out relay settling.
+    pub settled: bool,
+}
+
+impl TestRig {
+    pub fn new() -> Self {
+        Self { rig: Rig::new(), board: FakeBoard::new(), settled: false }
+    }
+
+    /// Sends `request` and returns its response.
+    pub fn send(&mut self, request: Request) -> Response<'static> {
+        let mut payload = [0; MAX_PAYLOAD];
+        let len = Message::Request { request_id: 7, request }.encode(&mut payload);
+        let mut reply = [0; MAX_PAYLOAD];
+        let Handled::Reply { len, settle } =
+            self.rig.handle(&payload[..len], &mut self.board, &mut reply)
+        else {
+            panic!("no reply");
+        };
+        self.settled = settle;
+        match Message::decode(reply[..len].to_vec().leak()) {
+            Ok(Message::Response { request_id: 7, response }) => response,
+            other => panic!("not a response to the request: {other:?}"),
+        }
+    }
+
+    /// Sends `request` and returns its ok reply.
+    pub fn ok(&mut self, request: Request) -> Reply<'static> {
+        match self.send(request) {
+            Response::Ok(reply) => reply,
+            Response::Err { error, detail, .. } => panic!("refused with {error:?}: {detail}"),
+        }
+    }
+
+    /// Sends `request` and returns the error it was refused with.
+    pub fn refused(&mut self, request: Request) -> ErrorCode {
+        match self.send(request) {
+            Response::Ok(reply) => panic!("accepted: {reply:?}"),
+            Response::Err { error, .. } => error,
+        }
+    }
+}
 
 pub fn protocol_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/protocol")

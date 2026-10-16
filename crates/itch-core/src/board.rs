@@ -3,6 +3,9 @@
 
 pub trait Board {
     fn info(&self) -> BoardInfo;
+
+    /// Drives the Channels to `state`, bit 0 = CH1.
+    fn write_outputs(&mut self, state: u16);
 }
 
 /// Facts fixed for the life of a boot.

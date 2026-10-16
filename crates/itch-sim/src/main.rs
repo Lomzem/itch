@@ -7,9 +7,10 @@ use std::net::{TcpListener, TcpStream};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
-use itch_core::rig::{Handled, Rig};
+use itch_core::rig::{Handled, Rig, SETTLE_MS};
 use sim_board::SimBoard;
 
 const USAGE: &str = "usage: itch-sim [--bind ADDR]
@@ -72,7 +73,11 @@ fn serve(mut stream: TcpStream, sim: &Mutex<Sim>) -> io::Result<()> {
                 let Sim { rig, board } = &mut *sim.lock().unwrap();
                 rig.handle(request, board, &mut reply)
             };
-            if let Handled::Reply { len, .. } = handled {
+            if let Handled::Reply { len, settle } = handled {
+                if settle {
+                    // Outside the lock, so other connections aren't held up.
+                    thread::sleep(Duration::from_millis(SETTLE_MS));
+                }
                 let len = encode_frame(&reply[..len], &mut frame);
                 stream.write_all(&frame[..len])?;
             }
