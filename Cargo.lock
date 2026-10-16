@@ -15,6 +15,7 @@ name = "itch-sim"
 version = "0.1.0"
 dependencies = [
  "itch-core",
+ "log",
 ]
 
 [[package]]

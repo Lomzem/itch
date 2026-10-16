@@ -1,5 +1,6 @@
 //! A simulated Rig serving the itch protocol over TCP.
 
+mod logs;
 mod sim_board;
 
 use std::io::{self, Read, Write};
@@ -8,8 +9,9 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
+use itch_core::frame::{FrameDecoder, FrameError, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::{Handled, Rig};
+use logs::ConnectionLogs;
 use sim_board::SimBoard;
 
 const USAGE: &str = "usage: itch-sim [--bind ADDR]
@@ -44,6 +46,7 @@ fn main() -> ExitCode {
         }
     };
     println!("itch-sim listening on tcp://{}", listener.local_addr().unwrap());
+    logs::init();
 
     let sim = Arc::new(Mutex::new(Sim { rig: Rig::new(), board: SimBoard::new() }));
     for stream in listener.incoming().flatten() {
@@ -53,29 +56,88 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Answers one connection's requests until it closes.
-fn serve(mut stream: TcpStream, sim: &Mutex<Sim>) -> io::Result<()> {
+/// Serves one connection until it closes: its replies, and its Log Events
+/// from a second thread.
+fn serve(stream: TcpStream, sim: &Mutex<Sim>) {
+    let peer = stream.peer_addr().map_or_else(|_| "a client".to_owned(), |addr| addr.to_string());
+    log::info!("{peer} connected");
+    let logs = ConnectionLogs::open();
+    let writer = match stream.try_clone() {
+        Ok(writer) => Mutex::new(writer),
+        Err(err) => {
+            log::warn!("{peer}: {err}");
+            return;
+        }
+    };
+    thread::scope(|scope| {
+        scope.spawn(|| send_logs(&logs, &writer));
+        if let Err(err) = answer(&stream, &peer, sim, &logs, &writer) {
+            log::warn!("{peer}: {err}");
+        }
+        logs.close();
+    });
+    log::info!("{peer} disconnected");
+}
+
+/// Answers the connection's requests until it closes.
+fn answer(
+    mut stream: &TcpStream,
+    peer: &str,
+    sim: &Mutex<Sim>,
+    logs: &ConnectionLogs,
+    writer: &Mutex<TcpStream>,
+) -> io::Result<()> {
     let mut decoder = FrameDecoder::new();
     let mut input = [0; 4096];
     let mut reply = [0; MAX_PAYLOAD];
-    let mut frame = [0; MAX_FRAME];
     loop {
         let read = stream.read(&mut input)?;
         if read == 0 {
             return Ok(());
         }
         for &byte in &input[..read] {
-            let Some(Ok(request)) = decoder.push(byte) else {
-                continue;
+            let request = match decoder.push(byte) {
+                None => continue,
+                Some(Ok(request)) => request,
+                Some(Err(FrameError::Corrupt)) => {
+                    log::warn!("{peer}: dropped a corrupt frame");
+                    continue;
+                }
+                Some(Err(FrameError::Oversized)) => {
+                    log::warn!("{peer}: dropped a frame over {MAX_PAYLOAD} bytes");
+                    continue;
+                }
             };
             let handled = {
                 let Sim { rig, board } = &mut *sim.lock().unwrap();
                 rig.handle(request, board, &mut reply)
             };
-            if let Handled::Reply { len, .. } = handled {
-                let len = encode_frame(&reply[..len], &mut frame);
-                stream.write_all(&frame[..len])?;
-            }
+            let len = match handled {
+                Handled::NoReply => continue,
+                Handled::Reply { len, .. } => len,
+                Handled::SetLogLevel { len, level } => {
+                    logs.set_level(level);
+                    len
+                }
+            };
+            send(writer, &reply[..len])?;
         }
     }
+}
+
+/// Sends the connection's Log Events as they come, until it closes.
+fn send_logs(logs: &ConnectionLogs, writer: &Mutex<TcpStream>) {
+    let mut event = [0; MAX_PAYLOAD];
+    while let Some(len) = logs.next_event(&mut event) {
+        if send(writer, &event[..len]).is_err() {
+            return;
+        }
+    }
+}
+
+/// Frames and sends one payload, whole, between other threads' frames.
+fn send(writer: &Mutex<TcpStream>, payload: &[u8]) -> io::Result<()> {
+    let mut frame = [0; MAX_FRAME];
+    let len = encode_frame(payload, &mut frame);
+    writer.lock().unwrap().write_all(&frame[..len])
 }
