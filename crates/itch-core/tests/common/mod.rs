@@ -1,5 +1,10 @@
 #![allow(dead_code)]
 
+mod fake_board;
+
+#[allow(unused_imports)]
+pub use fake_board::FakeBoard;
+
 use std::path::PathBuf;
 
 use serde_json::Value;
