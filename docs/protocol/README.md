@@ -101,7 +101,13 @@ A `Hello` refused with `Busy` and detail `queue full`:
 
 ### Strict decoding
 
-Every message has an exact layout. The Rig answers `Malformed` (with the `request_id` echoed) to a body that is too short, has bytes left over, holds a `bool` other than 0 or 1, an unknown enum value, invalid UTF-8 or over-long text. A request `type` it doesn't know gets `UnknownRequest`. A payload under 5 bytes has no readable `request_id`, so the Rig drops it and the client times out.
+Every message has an exact layout. The Rig answers `Malformed` (with the `request_id` echoed) to a body that is too short, has bytes left over, holds a `bool` other than 0 or 1, an unknown enum value, invalid UTF-8 or over-long text. A request `type` it doesn't know gets `UnknownRequest`. A payload under 5 bytes has no readable `request_id`, so the Rig drops it, counts it in `malformed_frames` and the client times out.
+
+A `WriteChannels` whose body stops a byte short gets `Malformed`, with its `request_id` echoed:
+
+```hex
+03 78 56 34 12 ef cd ab 89 67 45 23 01 01 80 01
+```
 
 ## Ordering
 
@@ -118,7 +124,7 @@ A Rig has one Lease, which lets one client change its Channels. It belongs to a 
 - A token-bearing request to a free Rig claims the Lease and proceeds.
 - A retried `AcquireLease` with the current token succeeds.
 - `ReleaseLease` frees the Rig. A token that doesn't hold the Lease makes it a no-op success.
-- Reads (`Hello`, `GetChannels`) carry no token and neither need nor renew the Lease.
+- Reads (`Hello`, `GetChannels`, `GetStatus`) carry no token and neither need nor renew the Lease.
 - Releasing the Lease leaves the Channels as they are. Only a reboot Clears them.
 
 ## Versioning
@@ -145,6 +151,7 @@ Top level:
 | `messages` | Payload vectors: a message and its payload |
 | `frames` | Frame vectors: a payload and its complete TAFP frame |
 | `streams` | Decoder vectors: a byte stream and what a receiver gets from it |
+| `malformed` | Strict-decoding vectors: payloads with a valid CRC that break their byte table |
 
 Every case has a `name`, unique within its section.
 
@@ -159,3 +166,10 @@ Every case has a `name`, unique within its section.
 **`frames`:** `{ "name", "payload", "frame" }`. Encoding `payload` gives exactly `frame`, and decoding `frame` gives exactly `payload`.
 
 **`streams`:** `{ "name", "stream", "payloads", "crc_failures", "oversized_frames" }`. Feeding `stream` to a fresh decoder yields exactly `payloads`, in order, and drops frames counted as given. These cover bad CRCs, truncated and oversized frames, empty frames and resync.
+
+**`malformed`:** `{ "name", "payload", "error" }`. A strict decoder rejects `payload`, and `error` names how:
+
+- `"Malformed"`: the payload breaks its byte table (too short, bytes left over, a bad `bool` or enum, invalid UTF-8, over-long text), or is an ok reply to an unknown request type.
+- `"UnknownRequest"`: a request whose `type` names no request.
+
+A client rejects every case. A Rig, given a request case (`type` below `0x80`), answers with `error` as its `status` and the payload's `request_id` echoed, except that a payload under 5 bytes gets no reply and is counted in `malformed_frames`.

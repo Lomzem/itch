@@ -8,6 +8,7 @@ Each message lists its request body and its ok result body. The header (`type`, 
 | `0x02` | [`GetChannels`](#getchannels) |
 | `0x03` | [`WriteChannels`](#writechannels) |
 | `0x04` | [`Clear`](#clear) |
+| `0x05` | [`GetStatus`](#getstatus) |
 | `0x08` | [`AcquireLease`](#acquirelease) |
 | `0x09` | [`RenewLease`](#renewlease) |
 | `0x0A` | [`ReleaseLease`](#releaselease) |
@@ -150,6 +151,51 @@ Reply:
 ```hex
 84 78 56 34 12 00
 00 00
+```
+
+## GetStatus
+
+`0x05`. Reports the Rig's health since boot. It needs no Lease.
+
+Request body: empty.
+
+Result body:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `uptime_ms` | `u64` | Milliseconds since boot |
+| `reset_reason` | `u8` | Why the Rig last reset: a raw ESP32-S3 `SocResetReason`, listed in [`errors.md`](errors.md#reset-reasons). 0 = unknown |
+| `last_panic` | `text` | Where the previous boot panicked, such as `src/main.rs:88:5`. At most 64 bytes. Empty = no panic |
+| `holder` | `text` | The current Holder. Empty = the Rig is free |
+| `crc_failures` | `u32` | |
+| `oversized_frames` | `u32` | |
+| `malformed_frames` | `u32` | |
+| `dropped_logs` | `u32` | |
+| `expander_faults` | `u32` | |
+| `usb_tx_dropped` | `u32` | |
+
+The counters are described in [`errors.md`](errors.md#counters). Each counts since boot and wraps at 2^32.
+
+Request:
+
+```hex
+05 78 56 34 12
+```
+
+Reply from a Rig up for 1 h 2 min 3 s after a software reset, whose previous boot panicked at `src/main.rs:88:5`, held by `qa@bench-pc acme_test.py`, with counters 1 to 6 in order:
+
+```hex
+85 78 56 34 12 00
+f8 ce 38 00 00 00 00 00
+03
+10 73 72 63 2f 6d 61 69 6e 2e 72 73 3a 38 38 3a 35
+18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79
+01 00 00 00
+02 00 00 00
+03 00 00 00
+04 00 00 00
+05 00 00 00
+06 00 00 00
 ```
 
 ## AcquireLease
