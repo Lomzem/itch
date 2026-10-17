@@ -42,3 +42,12 @@ jobs:
           version: "1.97.0.0"
       - run: cargo +esp clippy-firmware
       - run: cargo +esp build-firmware
+      # A development build only has to compile here: the credentials are fake.
+      - run: cargo +esp clippy-firmware-wifi
+        env:
+          ITCH_WIFI_SSID: itch-ci
+          ITCH_WIFI_PASSWORD: not-a-real-password
+      - run: cargo +esp build-firmware-wifi
+        env:
+          ITCH_WIFI_SSID: itch-ci
+          ITCH_WIFI_PASSWORD: not-a-real-password

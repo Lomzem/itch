@@ -14,7 +14,7 @@ This is **protocol 1**.
 The Rig speaks one framed byte stream, the same over every transport:
 
 - **USB:** the ESP32-S3's native USB Serial/JTAG port (VID `0x303A`, PID `0x1001`). The USB serial number is the Rig's Hardware ID. This is how QA reach a Rig.
-- **TCP:** `itch-sim`, and firmware built with the `wifi` feature (development only, see ADR 0003). One TCP connection is one stream.
+- **TCP:** `itch-sim`, and firmware built with the `wifi` feature (development only, see ADR 0003), which listens on port 7878 and serves one connection at a time. One TCP connection is one stream.
 
 The Rig can't see connection boundaries over USB, so `Hello` is optional on the wire. Clients should still send it first on every connection.
 
