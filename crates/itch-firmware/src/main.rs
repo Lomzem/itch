@@ -44,12 +44,13 @@ async fn rig(mut board: RealBoard) {
     let mut ticker = Ticker::every(TICK);
     let mut reply = [0; MAX_PAYLOAD];
     loop {
-        let request = match select(queue::REQUESTS.receive(), ticker.next()).await {
-            Either::First(request) => request,
-            Either::Second(()) => {
+        // The tick goes first, so a stream of requests can't starve it.
+        let request = match select(ticker.next(), queue::REQUESTS.receive()).await {
+            Either::First(()) => {
                 board.tick();
                 continue;
             }
+            Either::Second(request) => request,
         };
         let len = match rig.handle(request.payload.as_bytes(), &mut board, &mut reply) {
             Handled::NoReply => continue,
