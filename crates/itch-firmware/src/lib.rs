@@ -6,8 +6,10 @@
 #![no_std]
 
 pub mod board;
+pub mod crash;
 #[cfg(feature = "firmware")]
 pub mod logger;
 pub mod queue;
+pub mod supervisor;
 #[cfg(feature = "firmware")]
 pub mod usb;

@@ -12,6 +12,7 @@ use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, Rig};
 use itch_core::wire::{Message, Request, WriteChannels};
 use itch_firmware::board::{Chip, RevA};
+use itch_firmware::supervisor::{DEADLINE_MS, Latch, ResetLine, Supervisor};
 
 const ADDRESS: u8 = 0x20;
 pub const IODIRA: u8 = 0x00;
@@ -69,6 +70,14 @@ impl Expander {
     /// Loses its configuration as after a brownout: every pin back to an
     /// input and every latch cleared, while RESET stays released.
     pub fn brown_out(&mut self) {
+        self.reset();
+    }
+
+    /// RESET driven low behind the board's back, as the supervisor does
+    /// straight through the GPIO registers.
+    pub fn pull_reset(&mut self) {
+        self.log.push(Op::Reset(true));
+        self.in_reset = true;
         self.reset();
     }
 
@@ -178,7 +187,7 @@ impl DelayNs for NoDelay {
     fn delay_ns(&mut self, _ns: u32) {}
 }
 
-pub type FakeRevA = RevA<Bus, ResetPin, Led, NoDelay>;
+pub type FakeRevA = RevA<Bus, ResetLine<'static, ResetPin>, Led, NoDelay>;
 
 const TOKEN: u64 = 0x0123_4567_89AB_CDEF;
 
@@ -189,6 +198,7 @@ pub struct Bench {
     led: Rc<Cell<bool>>,
     pub board: FakeRevA,
     pub rig: Rig,
+    latch: &'static Latch,
 }
 
 impl Bench {
@@ -196,9 +206,10 @@ impl Bench {
     pub fn power_on() -> Self {
         let expander = Rc::new(RefCell::new(Expander::power_on()));
         let led = Rc::new(Cell::new(false));
+        let latch = Box::leak(Box::new(Latch::new()));
         let board = RevA::new(
             Bus(Rc::clone(&expander)),
-            ResetPin(Rc::clone(&expander)),
+            ResetLine::new(ResetPin(Rc::clone(&expander)), latch),
             Led(Rc::clone(&led)),
             NoDelay,
             Chip {
@@ -208,7 +219,7 @@ impl Bench {
                 counters: Counters::default,
             },
         );
-        Self { expander, led, board, rig: Rig::new() }
+        Self { expander, led, board, rig: Rig::new(), latch }
     }
 
     /// Powers up and brings the expander up, as the firmware does at boot.
@@ -216,6 +227,13 @@ impl Bench {
         let mut bench = Self::power_on();
         bench.board.reinit().expect("the expander comes up");
         bench
+    }
+
+    /// Has the supervisor find that `rig` missed its deadline, as if the
+    /// `rig` task had stalled and is only now running again.
+    pub fn trip_supervisor(&mut self) {
+        Supervisor::new(self.latch, 0).check(0, DEADLINE_MS);
+        self.expander.borrow_mut().pull_reset();
     }
 
     /// Mask-writes the Channels through the Rig, bit 0 = CH1.
