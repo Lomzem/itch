@@ -1,10 +1,10 @@
 mod common;
 
-use common::FakeBoard;
+use common::{FakeBoard, cases, hex, vectors};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, Rig};
 use itch_core::wire::{
-    ErrorCode, FEATURE_WIFI, HelloReply, LogLevel, Message, Reply, Request, RequestType, Response,
+    ErrorCode, FEATURE_WIFI, HelloReply, LogLevel, Message, Reply, Request, Response,
 };
 
 #[test]
@@ -43,23 +43,29 @@ fn hello_reports_a_development_build() {
     assert_eq!(hello.features, FEATURE_WIFI);
 }
 
+/// Payloads under 5 bytes have no `request_id` and get no reply. The rest
+/// get the vector's error with their `request_id` echoed.
 #[test]
-fn an_unknown_request_type_gets_unknown_request_with_its_id() {
-    let reply = handle(&mut FakeBoard::new(), &[0x3F, 0x78, 0x56, 0x34, 0x12]).unwrap();
-    assert_eq!(reply[..6], [0xBF, 0x78, 0x56, 0x34, 0x12, ErrorCode::UnknownRequest as u8]);
-}
-
-#[test]
-fn a_request_with_trailing_bytes_gets_malformed_with_its_id() {
-    let mut payload = request(0x1234_5678, Request::Hello);
-    payload.push(0);
-    let reply = handle(&mut FakeBoard::new(), &payload).unwrap();
-    assert_eq!(reply[..6], [0x81, 0x78, 0x56, 0x34, 0x12, ErrorCode::Malformed as u8]);
-}
-
-#[test]
-fn a_payload_without_a_request_id_gets_no_reply() {
-    assert_eq!(handle(&mut FakeBoard::new(), &[RequestType::Hello as u8, 0, 0, 0]), None);
+fn malformed_requests_get_the_error_the_vectors_give() {
+    for case in cases(&vectors(), "malformed") {
+        let name = &case["name"];
+        let payload = hex(case["payload"].as_str().unwrap());
+        if payload[0] >= 0x40 {
+            continue; // An Event or a reply, which only clients decode.
+        }
+        let reply = handle(&mut FakeBoard::new(), &payload);
+        if payload.len() < 5 {
+            assert_eq!(reply, None, "{name}");
+            continue;
+        }
+        let error = match case["error"].as_str().unwrap() {
+            "Malformed" => ErrorCode::Malformed,
+            "UnknownRequest" => ErrorCode::UnknownRequest,
+            other => panic!("unknown error {other}"),
+        };
+        let header = [&[payload[0] | 0x80], &payload[1..5], &[error as u8]].concat();
+        assert_eq!(reply.unwrap()[..6], header, "{name}");
+    }
 }
 
 #[test]

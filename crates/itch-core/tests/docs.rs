@@ -12,6 +12,7 @@ fn every_hex_block_in_the_protocol_docs_matches_a_vector() {
         ("frames", "payload"),
         ("frames", "frame"),
         ("streams", "stream"),
+        ("malformed", "payload"),
     ]
     .iter()
     .flat_map(|&(section, field)| {

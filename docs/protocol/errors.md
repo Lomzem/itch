@@ -37,7 +37,35 @@ The level is per connection and defaults to off. Over USB it lasts until the Rig
 | --- | --- |
 | `crc_failures` | Frames dropped for a bad CRC, truncated COBS or a wrong `length` |
 | `oversized_frames` | Frames dropped for a payload over 1024 bytes |
-| `malformed_frames` | Payloads dropped for being under 5 bytes |
+| `malformed_frames` | Payloads dropped for being under 5 bytes, too short to hold a `request_id` |
 | `dropped_logs` | Log Events dropped because a connection's queue was full |
 | `expander_faults` | Times the Channel expander was found faulty and re-initialised |
 | `usb_tx_dropped` | Frames the USB transport cut short after its write timeout |
+
+## Reset reasons
+
+`GetStatus` reports the ESP32-S3's raw reset reason (`SocResetReason` in esp-hal). Clients should show the name, and the number for a value not listed here.
+
+| Value | Name | Cause |
+| --- | --- | --- |
+| 0 | — | Unknown |
+| `0x01` | `ChipPowerOn` | Power-on (also brown-out or super watchdog on some chips) |
+| `0x03` | `CoreSw` | Software reset of the digital core, such as after a panic |
+| `0x05` | `CoreDeepSleep` | Wake from deep sleep |
+| `0x07` | `CoreMwdt0` | Main watchdog 0 reset the digital core |
+| `0x08` | `CoreMwdt1` | Main watchdog 1 reset the digital core |
+| `0x09` | `CoreRtcWdt` | RTC watchdog reset the digital core |
+| `0x0B` | `CpuMwdt0` | Main watchdog 0 reset a CPU |
+| `0x0C` | `CpuSw` | Software reset of a CPU |
+| `0x0D` | `CpuRtcWdt` | RTC watchdog reset a CPU |
+| `0x0F` | `SysBrownOut` | Supply voltage dropped |
+| `0x10` | `SysRtcWdt` | RTC watchdog reset the digital core and RTC |
+| `0x11` | `CpuMwdt1` | Main watchdog 1 reset a CPU |
+| `0x12` | `SysSuperWdt` | Super watchdog reset the digital core and RTC |
+| `0x13` | `SysClkGlitch` | Clock glitch |
+| `0x14` | `CoreEfuseCrc` | eFuse CRC error |
+| `0x15` | `CoreUsbUart` | USB UART reset the digital core |
+| `0x16` | `CoreUsbJtag` | USB Serial/JTAG reset the digital core, as espflash does |
+| `0x17` | `CorePwrGlitch` | Power glitch |
+
+`itch-sim` always reports `ChipPowerOn`.

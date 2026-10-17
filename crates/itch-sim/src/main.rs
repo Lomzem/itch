@@ -6,6 +6,7 @@ mod sim_board;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::ExitCode;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -13,7 +14,7 @@ use std::time::Duration;
 use itch_core::frame::{FrameDecoder, FrameError, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::{Handled, Rig, SETTLE_MS};
 use logs::ConnectionLogs;
-use sim_board::SimBoard;
+use sim_board::{CRC_FAILURES, OVERSIZED_FRAMES, SimBoard};
 
 const USAGE: &str = "usage: itch-sim [--bind ADDR]
 
@@ -102,10 +103,12 @@ fn answer(
                 Some(Ok(request)) => request,
                 Some(Err(FrameError::Corrupt)) => {
                     log::warn!("{peer}: dropped a corrupt frame");
+                    CRC_FAILURES.fetch_add(1, Ordering::Relaxed);
                     continue;
                 }
                 Some(Err(FrameError::Oversized)) => {
                     log::warn!("{peer}: dropped a frame over {MAX_PAYLOAD} bytes");
+                    OVERSIZED_FRAMES.fetch_add(1, Ordering::Relaxed);
                     continue;
                 }
             };
