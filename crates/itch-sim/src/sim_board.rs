@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use itch_core::board::{Board, BoardInfo, Counters};
 
@@ -15,10 +15,12 @@ pub static OVERSIZED_FRAMES: AtomicU32 = AtomicU32::new(0);
 pub struct SimBoard {
     info: BoardInfo,
     booted: Instant,
+    /// How many times faster than real time the clock runs.
+    clock_rate: u32,
 }
 
 impl SimBoard {
-    pub fn new() -> Self {
+    pub fn new(clock_rate: u32) -> Self {
         Self {
             info: BoardInfo {
                 // A locally administered MAC, so it can't clash with a real Rig.
@@ -32,6 +34,7 @@ impl SimBoard {
                 last_panic: "",
             },
             booted: Instant::now(),
+            clock_rate,
         }
     }
 }
@@ -44,7 +47,8 @@ impl Board for SimBoard {
     fn write_outputs(&mut self, _state: u16) {}
 
     fn now(&self) -> u64 {
-        u64::try_from(self.booted.elapsed().as_millis()).unwrap_or(u64::MAX)
+        let elapsed = self.booted.elapsed().checked_mul(self.clock_rate).unwrap_or(Duration::MAX);
+        u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
     }
 
     fn counters(&self) -> Counters {
