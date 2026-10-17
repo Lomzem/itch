@@ -3,7 +3,9 @@ mod common;
 use common::{FakeBoard, cases, hex, vectors};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, Rig};
-use itch_core::wire::{ErrorCode, FEATURE_WIFI, HelloReply, Message, Reply, Request, Response};
+use itch_core::wire::{
+    ErrorCode, FEATURE_WIFI, HelloReply, LogLevel, Message, Reply, Request, Response,
+};
 
 #[test]
 fn hello_reports_the_rig_identity_and_default_label() {
@@ -66,6 +68,28 @@ fn malformed_requests_get_the_error_the_vectors_give() {
     }
 }
 
+#[test]
+fn set_log_level_hands_the_level_to_the_calling_connection() {
+    let mut reply = [0; MAX_PAYLOAD];
+    let request = request(9, Request::SetLogLevel { level: LogLevel::Info });
+    let Handled::SetLogLevel { len, level } =
+        Rig::new().handle(&request, &mut FakeBoard::new(), &mut reply)
+    else {
+        panic!("not a SetLogLevel");
+    };
+    assert_eq!(level, LogLevel::Info);
+    assert_eq!(
+        Message::decode(&reply[..len]),
+        Ok(Message::Response { request_id: 9, response: Response::Ok(Reply::SetLogLevel) })
+    );
+}
+
+#[test]
+fn a_log_level_above_debug_gets_malformed() {
+    let reply = handle(&mut FakeBoard::new(), &[0x07, 9, 0, 0, 0, 5]).unwrap();
+    assert_eq!(reply[..6], [0x87, 9, 0, 0, 0, ErrorCode::Malformed as u8]);
+}
+
 fn request(request_id: u32, request: Request) -> Vec<u8> {
     let mut out = [0; MAX_PAYLOAD];
     let len = Message::Request { request_id, request }.encode(&mut out);
@@ -76,6 +100,8 @@ fn handle(board: &mut FakeBoard, request: &[u8]) -> Option<Vec<u8>> {
     let mut reply = [0; MAX_PAYLOAD];
     match Rig::new().handle(request, board, &mut reply) {
         Handled::NoReply => None,
-        Handled::Reply { len, .. } => Some(reply[..len].to_vec()),
+        Handled::Reply { len, .. } | Handled::SetLogLevel { len, .. } => {
+            Some(reply[..len].to_vec())
+        }
     }
 }

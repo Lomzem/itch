@@ -9,9 +9,14 @@ Each message lists its request body and its ok result body. The header (`type`, 
 | `0x03` | [`WriteChannels`](#writechannels) |
 | `0x04` | [`Clear`](#clear) |
 | `0x05` | [`GetStatus`](#getstatus) |
+| `0x07` | [`SetLogLevel`](#setloglevel) |
 | `0x08` | [`AcquireLease`](#acquirelease) |
 | `0x09` | [`RenewLease`](#renewlease) |
 | `0x0A` | [`ReleaseLease`](#releaselease) |
+
+| Type | Event |
+| --- | --- |
+| `0x40` | [`Log`](#log) |
 
 Channel states are a `u16` with bit 0 = CH1 and bit 15 = CH16. A set bit means on (contact closed).
 
@@ -198,6 +203,30 @@ f8 ce 38 00 00 00 00 00
 06 00 00 00
 ```
 
+## SetLogLevel
+
+`0x07`. Sets which Log Events the Rig sends on this connection. It needs no Lease. The level is per connection and starts at off; over USB it lasts until the Rig reboots or the level changes. Setting it discards Log Events still queued for this connection, so a new script never receives an earlier one's backlog. `itch-py` sends it right after `Hello`, at off unless the user opted in.
+
+Request body:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `level` | `u8` | 0 off to 4 debug, from [`errors.md`](errors.md#log-levels). Anything higher gets `Malformed` |
+
+Result body: empty.
+
+Request with `request_id` `0x12345678`, level info:
+
+```hex
+07 78 56 34 12 03
+```
+
+Reply:
+
+```hex
+87 78 56 34 12 00
+```
+
 ## AcquireLease
 
 `0x08`. Takes the Lease. A retried acquire with the current token succeeds.
@@ -282,4 +311,23 @@ Reply:
 
 ```hex
 8a 78 56 34 12 00
+```
+
+## Log
+
+`0x40`, an Event. One line of the Rig's log, sent to each connection whose level lets it through. Each connection has a bounded queue; when it is full, new lines are dropped and counted in `dropped_logs`.
+
+Body:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `level` | `u8` | 1 error to 4 debug |
+| `dropped` | `u32` | Log Events this connection dropped since the last one sent |
+| `text` | | UTF-8 to the end of the frame, with no length byte. The Rig truncates a longer line on a character boundary to fit the 1024-byte payload, leaving at most 1018 bytes of text |
+
+A warning, after 3 dropped Log Events, with text `label set to café`:
+
+```hex
+40 02 03 00 00 00
+6c 61 62 65 6c 20 73 65 74 20 74 6f 20 63 61 66 c3 a9
 ```

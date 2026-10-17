@@ -1,13 +1,20 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
 use itch_core::board::{Board, BoardInfo, Counters};
+
+use crate::logs::DROPPED_LOGS;
+
+/// Frames any connection dropped for a bad CRC: the Rig's `crc_failures`.
+pub static CRC_FAILURES: AtomicU32 = AtomicU32::new(0);
+
+/// Frames any connection dropped for being oversized: `oversized_frames`.
+pub static OVERSIZED_FRAMES: AtomicU32 = AtomicU32::new(0);
 
 /// The simulated Rig's hardware: everything lives in memory.
 pub struct SimBoard {
     info: BoardInfo,
     booted: Instant,
-    /// Bumped by the connections, as the firmware's transports would.
-    pub counters: Counters,
 }
 
 impl SimBoard {
@@ -25,7 +32,6 @@ impl SimBoard {
                 last_panic: "",
             },
             booted: Instant::now(),
-            counters: Counters::default(),
         }
     }
 }
@@ -42,6 +48,11 @@ impl Board for SimBoard {
     }
 
     fn counters(&self) -> Counters {
-        self.counters
+        Counters {
+            crc_failures: CRC_FAILURES.load(Ordering::Relaxed),
+            oversized_frames: OVERSIZED_FRAMES.load(Ordering::Relaxed),
+            dropped_logs: DROPPED_LOGS.load(Ordering::Relaxed),
+            usb_tx_dropped: 0,
+        }
     }
 }

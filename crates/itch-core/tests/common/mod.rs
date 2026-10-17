@@ -45,6 +45,10 @@ impl TestRig {
                 self.settled = settle;
                 Some(reply[..len].to_vec())
             }
+            Handled::SetLogLevel { len, .. } => {
+                self.settled = false;
+                Some(reply[..len].to_vec())
+            }
         }
     }
 
