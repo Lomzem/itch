@@ -65,7 +65,7 @@ The level is per connection and defaults to off. Over USB it lasts until the Rig
 | `0x0C` | `CpuSw` | Software reset of a CPU |
 | `0x0D` | `CpuRtcWdt` | RTC watchdog reset a CPU |
 | `0x0F` | `SysBrownOut` | Supply voltage dropped |
-| `0x10` | `SysRtcWdt` | RTC watchdog reset the digital core and RTC |
+| `0x10` | `SysRtcWdt` | RTC watchdog reset the digital core and RTC, such as after a firmware hang |
 | `0x11` | `CpuMwdt1` | Main watchdog 1 reset a CPU |
 | `0x12` | `SysSuperWdt` | Super watchdog reset the digital core and RTC |
 | `0x13` | `SysClkGlitch` | Clock glitch |

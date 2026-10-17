@@ -178,7 +178,7 @@ Result body:
 | --- | --- | --- |
 | `uptime_ms` | `u64` | Milliseconds since boot |
 | `reset_reason` | `u8` | Why the Rig last reset: a raw ESP32-S3 `SocResetReason`, listed in [`errors.md`](errors.md#reset-reasons). 0 = unknown |
-| `last_panic` | `text` | Where the previous boot panicked, such as `src/main.rs:88:5`. At most 64 bytes. Empty = no panic |
+| `last_panic` | `text` | Where the previous boot panicked, such as `src/main.rs:88:5`. At most 64 bytes; a longer location keeps its end. Empty = no panic |
 | `holder` | `text` | The current Holder. Empty = the Rig is free |
 | `crc_failures` | `u32` | |
 | `oversized_frames` | `u32` | |
