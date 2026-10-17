@@ -3,8 +3,8 @@ mod common;
 use common::{cases, hex, vectors};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::wire::{
-    AcquireLease, ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, PROTOCOL, RenewLease,
-    Reply, Request, RequestType, Response, WriteChannels,
+    AcquireLease, DecodeError, ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, PROTOCOL,
+    RenewLease, Reply, Request, RequestType, Response, StatusReply, WriteChannels,
 };
 use serde_json::Value;
 
@@ -22,6 +22,19 @@ fn decoding_a_vector_payload_produces_the_message() {
     for case in cases(&vectors(), "messages") {
         let payload = hex(case["payload"].as_str().unwrap());
         assert_eq!(Message::decode(&payload), Ok(message(&case["message"])), "{}", case["name"]);
+    }
+}
+
+#[test]
+fn decoding_a_malformed_vector_fails_with_its_error() {
+    for case in cases(&vectors(), "malformed") {
+        let payload = hex(case["payload"].as_str().unwrap());
+        let expected = match case["error"].as_str().unwrap() {
+            "Malformed" => DecodeError::Malformed,
+            "UnknownRequest" => DecodeError::UnknownType,
+            other => panic!("unknown error {other}"),
+        };
+        assert_eq!(Message::decode(&payload), Err(expected), "{}", case["name"]);
     }
 }
 
@@ -62,6 +75,7 @@ fn request_type(name: &str) -> RequestType {
         "GetChannels" => RequestType::GetChannels,
         "WriteChannels" => RequestType::WriteChannels,
         "Clear" => RequestType::Clear,
+        "GetStatus" => RequestType::GetStatus,
         "AcquireLease" => RequestType::AcquireLease,
         "RenewLease" => RequestType::RenewLease,
         "ReleaseLease" => RequestType::ReleaseLease,
@@ -80,6 +94,7 @@ fn request(request_type: RequestType, json: &Value) -> Request<'_> {
             values: int(&json["values"]),
         }),
         RequestType::Clear => Request::Clear { token: token(&json["token"]) },
+        RequestType::GetStatus => Request::GetStatus,
         RequestType::AcquireLease => Request::AcquireLease(AcquireLease {
             token: token(&json["token"]),
             takeover: json["takeover"].as_bool().unwrap(),
@@ -109,6 +124,18 @@ fn reply(request_type: RequestType, json: &Value) -> Reply<'_> {
         RequestType::GetChannels => Reply::GetChannels { state: int(&json["state"]) },
         RequestType::WriteChannels => Reply::WriteChannels { state: int(&json["state"]) },
         RequestType::Clear => Reply::Clear { state: int(&json["state"]) },
+        RequestType::GetStatus => Reply::GetStatus(StatusReply {
+            uptime_ms: int(&json["uptime_ms"]),
+            reset_reason: int(&json["reset_reason"]),
+            last_panic: json["last_panic"].as_str().unwrap(),
+            holder: json["holder"].as_str().unwrap(),
+            crc_failures: int(&json["crc_failures"]),
+            oversized_frames: int(&json["oversized_frames"]),
+            malformed_frames: int(&json["malformed_frames"]),
+            dropped_logs: int(&json["dropped_logs"]),
+            expander_faults: int(&json["expander_faults"]),
+            usb_tx_dropped: int(&json["usb_tx_dropped"]),
+        }),
         RequestType::AcquireLease => Reply::AcquireLease { ttl_ms: int(&json["ttl_ms"]) },
         RequestType::RenewLease => Reply::RenewLease,
         RequestType::ReleaseLease => Reply::ReleaseLease,

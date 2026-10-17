@@ -4,7 +4,7 @@
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::OutputPin;
 use embedded_hal::i2c::I2c;
-use itch_core::board::{Board, BoardInfo};
+use itch_core::board::{Board, BoardInfo, Counters};
 
 /// The MCP23017's I2C address: A0-A2 are tied to GND.
 const EXPANDER: u8 = 0x20;
@@ -41,6 +41,19 @@ const CHANNELS: [(Port, u8); 16] = [
     (Port::A, 0),
 ];
 
+/// What the board reports from the chip and the rest of the firmware.
+#[derive(Debug, Clone, Copy)]
+pub struct Chip {
+    /// The factory MAC address.
+    pub hardware_id: [u8; 6],
+    /// The raw `SocResetReason` of this boot, or 0 if unknown.
+    pub reset_reason: u8,
+    /// Milliseconds since boot.
+    pub now: fn() -> u64,
+    /// The counters the transports keep.
+    pub counters: fn() -> Counters,
+}
+
 /// The Rev A board: an MCP23017 on I2C driving the 16 Channels, with its
 /// RESET on a GPIO, and the status LED.
 pub struct RevA<I2C, RESET, LED, DELAY> {
@@ -49,6 +62,7 @@ pub struct RevA<I2C, RESET, LED, DELAY> {
     led: LED,
     delay: DELAY,
     info: BoardInfo,
+    chip: Chip,
     /// The Channels last written, bit 0 = CH1.
     outputs: u16,
     /// The last expander operation failed.
@@ -59,15 +73,17 @@ pub struct RevA<I2C, RESET, LED, DELAY> {
 
 impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> RevA<I2C, RESET, LED, DELAY> {
     /// Takes over a board whose expander RESET is already driven low.
-    pub fn new(i2c: I2C, reset: RESET, led: LED, delay: DELAY, hardware_id: [u8; 6]) -> Self {
+    pub fn new(i2c: I2C, reset: RESET, led: LED, delay: DELAY, chip: Chip) -> Self {
         let info = BoardInfo {
-            hardware_id,
+            hardware_id: chip.hardware_id,
             firmware_version: env!("CARGO_PKG_VERSION"),
             dirty: false,
             features: 0,
             board_revision: "A",
+            reset_reason: chip.reset_reason,
+            last_panic: "",
         };
-        Self { i2c, reset, led, delay, info, outputs: 0, faulted: false, blink: false }
+        Self { i2c, reset, led, delay, info, chip, outputs: 0, faulted: false, blink: false }
     }
 
     /// Pulses RESET and brings the expander back up with every Channel off.
@@ -132,6 +148,14 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> Board
         self.faulted = self.write_pair(OLATA, ports(state)).is_err();
         self.show_status();
     }
+
+    fn now(&self) -> u64 {
+        (self.chip.now)()
+    }
+
+    fn counters(&self) -> Counters {
+        (self.chip.counters)()
+    }
 }
 
 /// The expander didn't answer or didn't take its configuration.
@@ -155,6 +179,8 @@ pub use esp32s3::{Parts, RealBoard, UsbRx, UsbTx, boot, force_reset_low};
 /// The ESP32-S3 side of the board: pins, peripherals and boot.
 #[cfg(feature = "firmware")]
 mod esp32s3 {
+    use core::sync::atomic::{AtomicU32, Ordering};
+
     use esp_hal::delay::Delay;
     use esp_hal::gpio::{Level, Output, OutputConfig};
     use esp_hal::i2c::master::{Config, I2c, SoftwareTimeout};
@@ -163,8 +189,10 @@ mod esp32s3 {
     use esp_hal::timer::timg::TimerGroup;
     use esp_hal::usb::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
     use esp_hal::{Async, Blocking};
+    use itch_core::board::Counters;
 
-    use super::RevA;
+    use super::{Chip, RevA};
+    use crate::{logger, usb};
 
     /// The expander's RESET is GPIO6, pulled low on the board.
     const RESET_GPIO: u8 = 6;
@@ -202,10 +230,27 @@ mod esp32s3 {
             .with_sda(p.GPIO5)
             .with_scl(p.GPIO4);
         let led = Output::new(p.GPIO15, Level::Low, OutputConfig::default());
-        let hardware_id =
-            esp_hal::efuse::base_mac_address().as_bytes().try_into().expect("a 6-byte MAC address");
+        let chip = Chip {
+            hardware_id: esp_hal::efuse::base_mac_address()
+                .as_bytes()
+                .try_into()
+                .expect("a 6-byte MAC address"),
+            reset_reason: esp_hal::system::reset_reason().map_or(0, |reason| reason as u8),
+            now: || embassy_time::Instant::now().as_millis(),
+            counters,
+        };
         let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
-        Parts { board: RevA::new(i2c, reset, led, Delay::new(), hardware_id), usb_rx, usb_tx }
+        Parts { board: RevA::new(i2c, reset, led, Delay::new(), chip), usb_rx, usb_tx }
+    }
+
+    fn counters() -> Counters {
+        let load = |counter: &AtomicU32| counter.load(Ordering::Relaxed);
+        Counters {
+            crc_failures: load(&usb::CRC_FAILURES),
+            oversized_frames: load(&usb::OVERSIZED_FRAMES),
+            dropped_logs: load(&logger::DROPPED_LOGS),
+            usb_tx_dropped: load(&usb::TX_DROPPED),
+        }
     }
 
     /// Drives the expander RESET low straight through the GPIO registers,

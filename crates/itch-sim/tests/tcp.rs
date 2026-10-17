@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::SETTLE_MS;
 use itch_core::wire::{
-    Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request, Response, WriteChannels,
+    Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request, Response, StatusReply,
+    WriteChannels,
 };
 
 #[test]
@@ -71,6 +72,41 @@ fn a_write_replies_after_the_contacts_settle() {
     let reply = exchange(&mut stream, 3, Request::WriteChannels(write));
     assert!(started.elapsed() >= Duration::from_millis(SETTLE_MS));
     assert_eq!(reply, Response::Ok(Reply::WriteChannels { state: 0x8001 }));
+}
+
+#[test]
+fn status_counts_bad_frames_from_every_connection() {
+    let sim = Sim::start();
+    let mut garbled = sim.connect();
+    // A Hello frame with a bad CRC, then a frame whose payload is under 5 bytes.
+    garbled
+        .write_all(&[0x00, 0x02, 0x05, 0x08, 0x01, 0x78, 0x56, 0x34, 0x12, 0xc2, 0xf3, 0x00])
+        .unwrap();
+    let mut short = [0; MAX_FRAME];
+    let len = encode_frame(&[0x05, 0x78, 0x56, 0x34], &mut short);
+    garbled.write_all(&short[..len]).unwrap();
+    hello(&mut garbled, 1);
+
+    let Response::Ok(Reply::GetStatus(status)) =
+        exchange(&mut sim.connect(), 2, Request::GetStatus)
+    else {
+        panic!("not a GetStatus reply");
+    };
+    assert_eq!(
+        StatusReply { uptime_ms: 0, ..status },
+        StatusReply {
+            uptime_ms: 0,
+            reset_reason: 0x01,
+            last_panic: "",
+            holder: "",
+            crc_failures: 1,
+            oversized_frames: 0,
+            malformed_frames: 1,
+            dropped_logs: 0,
+            expander_faults: 0,
+            usb_tx_dropped: 0,
+        }
+    );
 }
 
 struct Sim {

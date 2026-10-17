@@ -7,10 +7,11 @@ use std::rc::Rc;
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{ErrorType as PinErrorType, OutputPin};
 use embedded_hal::i2c::{self, ErrorKind, I2c, NoAcknowledgeSource, Operation};
+use itch_core::board::Counters;
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, Rig};
 use itch_core::wire::{Message, Request, WriteChannels};
-use itch_firmware::board::RevA;
+use itch_firmware::board::{Chip, RevA};
 
 const ADDRESS: u8 = 0x20;
 pub const IODIRA: u8 = 0x00;
@@ -194,7 +195,12 @@ impl Bench {
             ResetPin(Rc::clone(&expander)),
             Led(Rc::clone(&led)),
             NoDelay,
-            [0x02, 0x00, 0x00, 0xAC, 0xE0, 0x01],
+            Chip {
+                hardware_id: [0x02, 0x00, 0x00, 0xAC, 0xE0, 0x01],
+                reset_reason: 0x01,
+                now: || 0,
+                counters: Counters::default,
+            },
         );
         Self { expander, led, board, rig: Rig::new() }
     }

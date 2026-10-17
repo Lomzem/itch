@@ -116,6 +116,55 @@
       "payload": "84 78 56 34 12 00 00 00"
     },
     {
+      "name": "get-status-request",
+      "message": {
+        "kind": "request",
+        "type": "GetStatus",
+        "request_id": 305419896
+      },
+      "payload": "05 78 56 34 12"
+    },
+    {
+      "name": "get-status-ok",
+      "message": {
+        "kind": "response",
+        "type": "GetStatus",
+        "request_id": 305419896,
+        "status": "Ok",
+        "uptime_ms": 3723000,
+        "reset_reason": 3,
+        "last_panic": "src/main.rs:88:5",
+        "holder": "qa@bench-pc acme_test.py",
+        "crc_failures": 1,
+        "oversized_frames": 2,
+        "malformed_frames": 3,
+        "dropped_logs": 4,
+        "expander_faults": 5,
+        "usb_tx_dropped": 6
+      },
+      "payload": "85 78 56 34 12 00 f8 ce 38 00 00 00 00 00 03 10 73 72 63 2f 6d 61 69 6e 2e 72 73 3a 38 38 3a 35 18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79 01 00 00 00 02 00 00 00 03 00 00 00 04 00 00 00 05 00 00 00 06 00 00 00"
+    },
+    {
+      "name": "get-status-ok-fresh-boot",
+      "message": {
+        "kind": "response",
+        "type": "GetStatus",
+        "request_id": 305419896,
+        "status": "Ok",
+        "uptime_ms": 250,
+        "reset_reason": 1,
+        "last_panic": "",
+        "holder": "",
+        "crc_failures": 0,
+        "oversized_frames": 0,
+        "malformed_frames": 0,
+        "dropped_logs": 0,
+        "expander_faults": 0,
+        "usb_tx_dropped": 0
+      },
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+    },
+    {
       "name": "acquire-lease-request",
       "message": {
         "kind": "request",
@@ -206,7 +255,7 @@
         "type": "Log",
         "level": 2,
         "dropped": 3,
-        "text": "label set to caf\u00e9"
+        "text": "label set to café"
       },
       "payload": "40 02 03 00 00 00 6c 61 62 65 6c 20 73 65 74 20 74 6f 20 63 61 66 c3 a9"
     }
@@ -302,6 +351,118 @@
       ],
       "crc_failures": 1,
       "oversized_frames": 0
+    }
+  ],
+  "malformed": [
+    {
+      "name": "request-under-5-bytes",
+      "payload": "01 78 56 34",
+      "error": "Malformed"
+    },
+    {
+      "name": "hello-request-trailing-byte",
+      "payload": "01 78 56 34 12 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "write-channels-short-body",
+      "payload": "03 78 56 34 12 ef cd ab 89 67 45 23 01 01 80 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "clear-trailing-byte",
+      "payload": "04 78 56 34 12 ef cd ab 89 67 45 23 01 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "acquire-lease-bad-bool",
+      "payload": "08 78 56 34 12 ef cd ab 89 67 45 23 01 02 18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79",
+      "error": "Malformed"
+    },
+    {
+      "name": "acquire-lease-holder-invalid-utf8",
+      "payload": "08 78 56 34 12 ef cd ab 89 67 45 23 01 00 02 c3 28",
+      "error": "Malformed"
+    },
+    {
+      "name": "acquire-lease-holder-over-64-bytes",
+      "payload": "08 78 56 34 12 ef cd ab 89 67 45 23 01 00 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61",
+      "error": "Malformed"
+    },
+    {
+      "name": "renew-lease-holder-longer-than-body",
+      "payload": "09 78 56 34 12 ef cd ab 89 67 45 23 01 0c 71 61",
+      "error": "Malformed"
+    },
+    {
+      "name": "unknown-request-type",
+      "payload": "3f 78 56 34 12",
+      "error": "UnknownRequest"
+    },
+    {
+      "name": "unknown-request-type-with-body",
+      "payload": "3f 78 56 34 12 01 02",
+      "error": "UnknownRequest"
+    },
+    {
+      "name": "hello-ok-short-body",
+      "payload": "81 78 56 34 12 00 01 00 05 31 2e 30 2e 30 00 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31",
+      "error": "Malformed"
+    },
+    {
+      "name": "hello-ok-trailing-byte",
+      "payload": "81 78 56 34 12 00 01 00 05 31 2e 30 2e 30 00 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "hello-ok-bad-bool",
+      "payload": "81 78 56 34 12 00 01 00 05 31 2e 30 2e 30 02 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38",
+      "error": "Malformed"
+    },
+    {
+      "name": "hello-ok-label-invalid-utf8",
+      "payload": "81 78 56 34 12 00 01 00 05 31 2e 30 2e 30 00 00 10 01 41 60 55 f9 c0 27 18 02 c3 28",
+      "error": "Malformed"
+    },
+    {
+      "name": "hello-ok-label-over-64-bytes",
+      "payload": "81 78 56 34 12 00 01 00 05 31 2e 30 2e 30 00 00 10 01 41 60 55 f9 c0 27 18 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-last-panic-over-64-bytes",
+      "payload": "85 78 56 34 12 00 01 00 00 00 00 00 00 00 01 41 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "ok-reply-to-unknown-type",
+      "payload": "bf 78 56 34 12 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "error-reply-without-detail",
+      "payload": "81 78 56 34 12 07",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-log-level-above-debug",
+      "payload": "07 78 56 34 12 05",
+      "error": "Malformed"
+    },
+    {
+      "name": "log-event-level-off",
+      "payload": "40 00 00 00 00 00 61",
+      "error": "Malformed"
+    },
+    {
+      "name": "log-event-short",
+      "payload": "40 02 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "log-event-text-invalid-utf8",
+      "payload": "40 02 00 00 00 00 c3 28",
+      "error": "Malformed"
     }
   ]
 }

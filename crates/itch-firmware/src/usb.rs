@@ -10,7 +10,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::{Channel, TrySendError};
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, with_timeout};
-use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
+use itch_core::frame::{FrameDecoder, FrameError, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::logs::LogQueue;
 use itch_core::wire::LogLevel;
 
@@ -24,7 +24,13 @@ const WRITE_TIMEOUT: Duration = Duration::from_millis(100);
 /// Room for one full-length Log Event or many short ones.
 const LOG_BYTES: usize = 4 * 1024;
 
-/// Frames that didn't fully go out: the Rig's `usb_tx_dropped` counter.
+/// Frames dropped for a bad CRC: the Rig's `crc_failures` counter.
+pub static CRC_FAILURES: AtomicU32 = AtomicU32::new(0);
+
+/// Frames dropped for being oversized: `oversized_frames`.
+pub static OVERSIZED_FRAMES: AtomicU32 = AtomicU32::new(0);
+
+/// Frames cut short by the write timeout: `usb_tx_dropped`.
 pub static TX_DROPPED: AtomicU32 = AtomicU32::new(0);
 
 /// Replies waiting for `usb_tx`.
@@ -50,15 +56,26 @@ pub async fn usb_rx(mut rx: UsbRx) {
     loop {
         let Ok(read) = embedded_io_async::Read::read(&mut rx, &mut bytes).await;
         for &byte in &bytes[..read] {
-            let Some(Ok(payload)) = decoder.push(byte) else {
-                continue;
+            let payload = match decoder.push(byte) {
+                None => continue,
+                Some(Ok(payload)) => payload,
+                Some(Err(FrameError::Corrupt)) => {
+                    log::warn!("dropped a corrupt frame");
+                    CRC_FAILURES.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
+                Some(Err(FrameError::Oversized)) => {
+                    log::warn!("dropped a frame over {MAX_PAYLOAD} bytes");
+                    OVERSIZED_FRAMES.fetch_add(1, Ordering::Relaxed);
+                    continue;
+                }
             };
             let request = Queued { transport: Transport::Usb, payload: Payload::new(payload) };
             if let Err(TrySendError::Full(request)) = queue::REQUESTS.try_send(request)
                 && let Some(busy) = queue::busy(request.payload.as_bytes())
-                && REPLIES.try_send(busy).is_err()
             {
-                TX_DROPPED.fetch_add(1, Ordering::Relaxed);
+                // With replies backed up too, the client times out and retries.
+                let _ = REPLIES.try_send(busy);
             }
         }
     }
@@ -83,7 +100,7 @@ pub async fn usb_tx(mut tx: UsbTx) {
             embedded_io_async::Write::flush(&mut tx).await
         })
         .await;
-        if !matches!(sent, Ok(Ok(()))) {
+        if sent.is_err() {
             // The host sees a cut-off frame and resyncs on the next one's
             // leading delimiter.
             TX_DROPPED.fetch_add(1, Ordering::Relaxed);
