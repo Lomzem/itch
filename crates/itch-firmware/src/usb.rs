@@ -86,6 +86,7 @@ pub async fn usb_rx(mut rx: UsbRx) {
 pub async fn usb_tx(mut tx: UsbTx) {
     let mut log = [0; MAX_PAYLOAD];
     let mut frame = [0; MAX_FRAME];
+    let mut timed_out = false;
     loop {
         let len = if let Ok(reply) = REPLIES.try_receive() {
             encode_frame(reply.as_bytes(), &mut frame)
@@ -96,11 +97,17 @@ pub async fn usb_tx(mut tx: UsbTx) {
             continue;
         };
         let sent = with_timeout(WRITE_TIMEOUT, async {
+            // A timed-out frame can leave a packet the host hasn't read, and
+            // esp-hal writes without waiting for room, so wait for the host.
+            if timed_out {
+                embedded_io_async::Write::flush(&mut tx).await?;
+            }
             embedded_io_async::Write::write_all(&mut tx, &frame[..len]).await?;
             embedded_io_async::Write::flush(&mut tx).await
         })
         .await;
-        if sent.is_err() {
+        timed_out = sent.is_err();
+        if timed_out {
             // The host sees a cut-off frame and resyncs on the next one's
             // leading delimiter.
             TX_DROPPED.fetch_add(1, Ordering::Relaxed);
