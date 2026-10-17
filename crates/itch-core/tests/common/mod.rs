@@ -30,6 +30,11 @@ impl TestRig {
         Self { rig: Rig::new(&mut board), board, settled: false }
     }
 
+    /// Runs one idle tick.
+    pub fn tick(&mut self) {
+        self.rig.tick(&mut self.board);
+    }
+
     /// Sends `request` and returns its response.
     pub fn send(&mut self, request: Request) -> Response<'static> {
         let mut payload = [0; MAX_PAYLOAD];

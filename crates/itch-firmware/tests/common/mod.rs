@@ -7,7 +7,7 @@ use std::rc::Rc;
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{ErrorType as PinErrorType, OutputPin};
 use embedded_hal::i2c::{self, ErrorKind, I2c, NoAcknowledgeSource, Operation};
-use itch_core::board::Counters;
+use itch_core::board::{Board, Counters};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, Rig};
 use itch_core::wire::{Message, Request, WriteChannels};
@@ -64,6 +64,12 @@ impl Expander {
         self.registers = [0; REGISTERS];
         self.registers[usize::from(IODIRA)] = 0xFF;
         self.registers[usize::from(IODIRA) + 1] = 0xFF;
+    }
+
+    /// Loses its configuration as after a brownout: every pin back to an
+    /// input and every latch cleared, while RESET stays released.
+    pub fn brown_out(&mut self) {
+        self.reset();
     }
 
     pub fn in_reset(&self) -> bool {
@@ -231,11 +237,17 @@ impl Bench {
         self.led.get()
     }
 
+    /// Runs one idle tick, as the firmware's `rig` task does.
+    pub fn tick(&mut self) {
+        self.rig.tick(&mut self.board);
+        self.board.tick();
+    }
+
     /// The LED over the next `ticks` idle ticks.
     pub fn led_over(&mut self, ticks: usize) -> Vec<bool> {
         (0..ticks)
             .map(|_| {
-                self.board.tick();
+                self.tick();
                 self.led()
             })
             .collect()

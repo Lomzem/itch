@@ -17,6 +17,12 @@ A response's `status` is 0 on success, otherwise one of these codes. `detail` is
 | 9 | `StorageFault` | The Rig couldn't persist a setting |
 | 10 | `Internal` | A Rig bug |
 
+## Expander faults
+
+The Rig checks its Channel expander on every idle tick, about every 50 ms. If the expander doesn't answer, or no longer drives the commanded Channels, the Rig re-initialises it, drives the commanded Channels again and counts one `expander_faults`. A write that fails is recovered the same way before it is answered.
+
+If the expander doesn't come back, the Rig holds it in reset, which turns every Channel off, and retries on every tick. Meanwhile `WriteChannels` and `Clear` are refused with `HardwareFault`, and `GetChannels` reports every Channel off. A refused request changes nothing, so once the expander is back, the Rig restores the Channels last commanded.
+
 ## Log levels
 
 | Level | Name |

@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use itch_core::board::{Board, BoardInfo, Counters, StorageFault};
+use itch_core::board::{Board, BoardInfo, Counters, HwFault, StorageFault};
 use itch_core::label::Label;
 
 use crate::logs::DROPPED_LOGS;
@@ -18,6 +18,10 @@ pub struct SimBoard {
     booted: Instant,
     /// How many times faster than real time the clock runs.
     clock_rate: u32,
+    /// What the simulated expander drives, bit 0 = CH1.
+    outputs: u16,
+    /// The expander is unreachable, so every operation on it fails.
+    hardware_fault: bool,
     /// The saved label, for this run only.
     label: Option<Label>,
     /// Makes every label save fail.
@@ -25,7 +29,7 @@ pub struct SimBoard {
 }
 
 impl SimBoard {
-    pub fn new(clock_rate: u32, storage_fault: bool) -> Self {
+    pub fn new(clock_rate: u32, hardware_fault: bool, storage_fault: bool) -> Self {
         Self {
             info: BoardInfo {
                 // A locally administered MAC, so it can't clash with a real Rig.
@@ -40,9 +44,17 @@ impl SimBoard {
             },
             booted: Instant::now(),
             clock_rate,
+            outputs: 0,
+            hardware_fault,
             label: None,
             storage_fault,
         }
+    }
+}
+
+impl SimBoard {
+    fn expander(&self) -> Result<(), HwFault> {
+        if self.hardware_fault { Err(HwFault) } else { Ok(()) }
     }
 }
 
@@ -51,7 +63,21 @@ impl Board for SimBoard {
         self.info
     }
 
-    fn write_outputs(&mut self, _state: u16) {}
+    fn write_outputs(&mut self, state: u16) -> Result<(), HwFault> {
+        self.expander()?;
+        self.outputs = state;
+        Ok(())
+    }
+
+    fn read_outputs(&mut self) -> Result<u16, HwFault> {
+        self.expander()?;
+        Ok(self.outputs)
+    }
+
+    fn reinit(&mut self) -> Result<(), HwFault> {
+        self.outputs = 0;
+        self.expander()
+    }
 
     fn now(&self) -> u64 {
         let elapsed = self.booted.elapsed().checked_mul(self.clock_rate).unwrap_or(Duration::MAX);

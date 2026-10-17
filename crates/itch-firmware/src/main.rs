@@ -7,6 +7,7 @@
 use embassy_futures::select::{Either, select};
 use embassy_time::{Duration, Ticker, Timer};
 use esp_rtos::embassy::Executor;
+use itch_core::board::Board;
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, Rig, SETTLE_MS};
 use itch_core::wire::LogLevel;
@@ -47,6 +48,7 @@ async fn rig(mut rig: Rig, mut board: RealBoard) {
         // The tick goes first, so a stream of requests can't starve it.
         let request = match select(ticker.next(), queue::REQUESTS.receive()).await {
             Either::First(()) => {
+                rig.tick(&mut board);
                 board.tick();
                 continue;
             }
