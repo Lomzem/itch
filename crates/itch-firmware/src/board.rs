@@ -4,8 +4,11 @@
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::OutputPin;
 use embedded_hal::i2c::I2c;
+use embedded_storage::nor_flash::NorFlash;
 use itch_core::board::{Board, BoardInfo, Counters, HwFault, StorageFault};
 use itch_core::label::Label;
+
+use crate::settings::Settings;
 
 /// The MCP23017's I2C address: A0-A2 are tied to GND.
 const EXPANDER: u8 = 0x20;
@@ -58,8 +61,8 @@ pub struct Chip {
 }
 
 /// The Rev A board: an MCP23017 on I2C driving the 16 Channels, with its
-/// RESET on a GPIO, and the status LED.
-pub struct RevA<I2C, RESET, LED, DELAY> {
+/// RESET on a GPIO, the status LED, and the settings in flash.
+pub struct RevA<I2C, RESET, LED, DELAY, FLASH: NorFlash> {
     i2c: I2C,
     reset: RESET,
     led: LED,
@@ -72,14 +75,14 @@ pub struct RevA<I2C, RESET, LED, DELAY> {
     faulted: bool,
     /// Where a fault blink is: lit or not.
     blink: bool,
-    /// The saved label. An in-RAM stand-in until ticket 15 adds the
-    /// flash-backed settings record, so a label lasts until the next reset.
-    label: Option<Label>,
+    settings: Settings<FLASH>,
 }
 
-impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> RevA<I2C, RESET, LED, DELAY> {
+impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash>
+    RevA<I2C, RESET, LED, DELAY, FLASH>
+{
     /// Takes over a board whose expander RESET is already driven low.
-    pub fn new(i2c: I2C, reset: RESET, led: LED, delay: DELAY, chip: Chip) -> Self {
+    pub fn new(i2c: I2C, reset: RESET, led: LED, delay: DELAY, flash: FLASH, chip: Chip) -> Self {
         let info = BoardInfo {
             hardware_id: chip.hardware_id,
             firmware_version: env!("CARGO_PKG_VERSION"),
@@ -99,7 +102,7 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> RevA<I2C, RESET
             outputs: 0,
             faulted: false,
             blink: false,
-            label: None,
+            settings: Settings::new(flash),
         }
     }
 
@@ -155,8 +158,8 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> RevA<I2C, RESET
     }
 }
 
-impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> Board
-    for RevA<I2C, RESET, LED, DELAY>
+impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash> Board
+    for RevA<I2C, RESET, LED, DELAY, FLASH>
 {
     fn info(&self) -> BoardInfo {
         self.info
@@ -202,12 +205,11 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> Board
     }
 
     fn load_label(&mut self) -> Option<Label> {
-        self.label
+        self.settings.load()
     }
 
     fn save_label(&mut self, label: &str) -> Result<(), StorageFault> {
-        self.label = Label::new(label);
-        Ok(())
+        self.settings.save(&Label::new(label).ok_or(StorageFault)?)
     }
 }
 
@@ -251,6 +253,7 @@ mod esp32s3 {
     use esp_hal::timer::timg::TimerGroup;
     use esp_hal::usb::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
     use esp_hal::{Async, Blocking};
+    use esp_storage::FlashStorage;
     use itch_core::board::Counters;
     use static_cell::StaticCell;
 
@@ -278,8 +281,13 @@ mod esp32s3 {
     /// The previous boot's crash record, for this boot's `last_panic`.
     static LAST_CRASH: StaticCell<Record> = StaticCell::new();
 
-    pub type RealBoard =
-        RevA<I2c<'static, Blocking>, ResetLine<'static, Output<'static>>, Output<'static>, Delay>;
+    pub type RealBoard = RevA<
+        I2c<'static, Blocking>,
+        ResetLine<'static, Output<'static>>,
+        Output<'static>,
+        Delay,
+        FlashStorage<'static>,
+    >;
     pub type UsbRx = UsbSerialJtagRx<'static, Async>;
     pub type UsbTx = UsbSerialJtagTx<'static, Async>;
 
@@ -335,7 +343,9 @@ mod esp32s3 {
         };
         let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
         let reset = ResetLine::new(reset, &supervisor::TRIPPED);
-        Parts { board: RevA::new(i2c, reset, led, Delay::new(), chip), watchdog, usb_rx, usb_tx }
+        let flash = FlashStorage::new(p.FLASH);
+        let board = RevA::new(i2c, reset, led, Delay::new(), flash, chip);
+        Parts { board, watchdog, usb_rx, usb_tx }
     }
 
     /// Takes the crash record the previous boot left, clearing it so it is
