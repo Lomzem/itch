@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::SETTLE_MS;
 use itch_core::wire::{
-    Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request, Response, StatusReply,
-    WriteChannels,
+    AcquireLease, ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request,
+    Response, StatusReply, WriteChannels,
 };
 
 #[test]
@@ -109,6 +109,22 @@ fn status_counts_bad_frames_from_every_connection() {
     );
 }
 
+#[test]
+fn a_faster_clock_lets_a_lease_lapse_in_real_milliseconds() {
+    let sim = Sim::start_with(&["--clock-rate", "1000"]);
+    let mut stream = sim.connect();
+    let acquire =
+        |token| Request::AcquireLease(AcquireLease { token, takeover: false, holder: "" });
+    exchange(&mut stream, 1, acquire(1));
+    let Response::Err { error, .. } = exchange(&mut stream, 2, acquire(2)) else {
+        panic!("a live Lease was taken");
+    };
+    assert_eq!(error, ErrorCode::LeaseHeld);
+    std::thread::sleep(Duration::from_millis(20));
+    let reply = exchange(&mut stream, 3, acquire(2));
+    assert_eq!(reply, Response::Ok(Reply::AcquireLease { ttl_ms: 10_000 }));
+}
+
 struct Sim {
     child: Child,
     url: String,
@@ -116,8 +132,15 @@ struct Sim {
 
 impl Sim {
     fn start() -> Self {
-        let mut child =
-            Command::new(env!("CARGO_BIN_EXE_itch-sim")).stdout(Stdio::piped()).spawn().unwrap();
+        Self::start_with(&[])
+    }
+
+    fn start_with(args: &[&str]) -> Self {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_itch-sim"))
+            .args(args)
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
         let mut line = String::new();
         BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
         let url = line.trim().strip_prefix("itch-sim listening on ").unwrap().to_owned();

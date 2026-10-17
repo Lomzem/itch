@@ -80,12 +80,20 @@ impl Rig {
         let settle = matches!(result, Ok(Reply::WriteChannels { .. } | Reply::Clear { .. }));
         let response = match result {
             Ok(reply) => Response::Ok(reply),
-            Err(error) => Response::Err { request_type, error, detail: "" },
+            Err(error) => Response::Err { request_type, error, detail: self.detail(error) },
         };
         let len = Message::Response { request_id, response }.encode(reply);
         match log_level {
             Some(level) => Handled::SetLogLevel { len, level },
             None => Handled::Reply { len, settle },
+        }
+    }
+
+    /// The `detail` of an error reply: who holds the Rig, for the Lease errors.
+    fn detail(&self, error: ErrorCode) -> &str {
+        match error {
+            ErrorCode::LeaseHeld | ErrorCode::LeaseLost => self.lease.holder(),
+            _ => "",
         }
     }
 
@@ -100,6 +108,8 @@ impl Rig {
         board: &mut B,
         label: &'a Label,
     ) -> Result<Reply<'a>, ErrorCode> {
+        let now = board.now();
+        self.lease.expire(now);
         Ok(match request {
             Request::Hello => {
                 let info = board.info();
@@ -121,7 +131,7 @@ impl Rig {
                 let info = board.info();
                 let counters = board.counters();
                 Reply::GetStatus(StatusReply {
-                    uptime_ms: board.now(),
+                    uptime_ms: now,
                     reset_reason: info.reset_reason,
                     last_panic: info.last_panic,
                     holder: self.lease.holder(),
@@ -134,20 +144,20 @@ impl Rig {
                 })
             }
             Request::WriteChannels(write) => {
-                self.lease.hold(write.token)?;
+                self.lease.hold(write.token, None, now)?;
                 let state = self.channels & !write.mask | write.values & write.mask;
                 Reply::WriteChannels { state: self.write(board, state) }
             }
             Request::Clear { token } => {
-                self.lease.hold(token)?;
+                self.lease.hold(token, None, now)?;
                 Reply::Clear { state: self.write(board, 0) }
             }
             Request::AcquireLease(acquire) => {
-                self.lease.acquire(acquire.token)?;
+                self.lease.acquire(acquire.token, acquire.takeover, acquire.holder, now)?;
                 Reply::AcquireLease { ttl_ms: lease::TTL_MS }
             }
             Request::RenewLease(renew) => {
-                self.lease.hold(renew.token)?;
+                self.lease.hold(renew.token, Some(renew.holder), now)?;
                 Reply::RenewLease
             }
             Request::ReleaseLease { token } => {

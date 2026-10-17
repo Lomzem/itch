@@ -95,6 +95,17 @@
       "payload": "83 78 56 34 12 04 00"
     },
     {
+      "name": "write-channels-lease-lost",
+      "message": {
+        "kind": "response",
+        "type": "WriteChannels",
+        "request_id": 305419896,
+        "status": "LeaseLost",
+        "detail": "dev@laptop other.py"
+      },
+      "payload": "83 78 56 34 12 06 13 64 65 76 40 6c 61 70 74 6f 70 20 6f 74 68 65 72 2e 70 79"
+    },
+    {
       "name": "clear-request",
       "message": {
         "kind": "request",
@@ -186,6 +197,17 @@
         "ttl_ms": 10000
       },
       "payload": "88 78 56 34 12 00 10 27 00 00"
+    },
+    {
+      "name": "acquire-lease-held",
+      "message": {
+        "kind": "response",
+        "type": "AcquireLease",
+        "request_id": 305419896,
+        "status": "LeaseHeld",
+        "detail": "qa@bench-pc acme_test.py"
+      },
+      "payload": "88 78 56 34 12 05 18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79"
     },
     {
       "name": "renew-lease-request",
