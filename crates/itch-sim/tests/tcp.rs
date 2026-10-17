@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::SETTLE_MS;
 use itch_core::wire::{
-    ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request, Response,
-    StatusReply, WriteChannels,
+    AcquireLease, ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request,
+    Response, StatusReply, WriteChannels,
 };
 
 #[test]
@@ -136,6 +136,22 @@ fn a_hardware_fault_is_found_by_the_idle_tick() {
         assert!(started.elapsed() < Duration::from_secs(2), "no tick found the fault");
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+#[test]
+fn a_faster_clock_lets_a_lease_lapse_in_real_milliseconds() {
+    let sim = Sim::start_with(&["--clock-rate", "1000"]);
+    let mut stream = sim.connect();
+    let acquire =
+        |token| Request::AcquireLease(AcquireLease { token, takeover: false, holder: "" });
+    exchange(&mut stream, 1, acquire(1));
+    let Response::Err { error, .. } = exchange(&mut stream, 2, acquire(2)) else {
+        panic!("a live Lease was taken");
+    };
+    assert_eq!(error, ErrorCode::LeaseHeld);
+    std::thread::sleep(Duration::from_millis(20));
+    let reply = exchange(&mut stream, 3, acquire(2));
+    assert_eq!(reply, Response::Ok(Reply::AcquireLease { ttl_ms: 10_000 }));
 }
 
 struct Sim {

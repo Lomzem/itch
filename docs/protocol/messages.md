@@ -128,6 +128,13 @@ Refused with `LeaseRequired` because the request carried token 0:
 83 78 56 34 12 04 00
 ```
 
+Refused with `LeaseLost` because `dev@laptop other.py` holds the Lease:
+
+```hex
+83 78 56 34 12 06
+13 64 65 76 40 6c 61 70 74 6f 70 20 6f 74 68 65 72 2e 70 79
+```
+
 ## Clear
 
 `0x04`. Turns every Channel off. It needs the Lease, and the reply goes out once the contacts have settled. While the expander is held in reset it is refused with `HardwareFault`.
@@ -229,7 +236,7 @@ Reply:
 
 ## AcquireLease
 
-`0x08`. Takes the Lease. A retried acquire with the current token succeeds.
+`0x08`. Takes the Lease. A retried acquire with the current token succeeds. While another client holds a live Lease it gets `LeaseHeld` naming the Holder, unless `takeover` is set (see [Lease](README.md#lease)).
 
 Request body:
 
@@ -259,6 +266,13 @@ Reply:
 ```hex
 88 78 56 34 12 00
 10 27 00 00
+```
+
+Refused with `LeaseHeld` because `qa@bench-pc acme_test.py` holds the Lease:
+
+```hex
+88 78 56 34 12 05
+18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79
 ```
 
 ## RenewLease

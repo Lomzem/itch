@@ -16,12 +16,14 @@ use itch_core::rig::{Handled, Rig, SETTLE_MS};
 use logs::ConnectionLogs;
 use sim_board::{CRC_FAILURES, OVERSIZED_FRAMES, SimBoard};
 
-const USAGE: &str = "usage: itch-sim [--bind ADDR] [--hardware-fault]
+const USAGE: &str = "usage: itch-sim [--bind ADDR] [--clock-rate N] [--hardware-fault]
 
 Serves a simulated Rig over TCP, by default on 127.0.0.1 with a free port.
 Once listening it prints one line: `itch-sim listening on tcp://HOST:PORT`.
 
-  --hardware-fault  simulate an unreachable Channel expander";
+--clock-rate N runs the Rig's clock N times faster than real time, so a test
+can let a Lease lapse without waiting 10 s.
+--hardware-fault simulates a Channel expander that never answers.";
 
 /// How often the Rig does its idle work.
 const TICK: Duration = Duration::from_millis(50);
@@ -34,16 +36,25 @@ struct Sim {
 
 fn main() -> ExitCode {
     let mut bind = String::from("127.0.0.1:0");
+    let mut clock_rate = 1;
     let mut hardware_fault = false;
-    let mut args = std::env::args().skip(1).peekable();
+    let mut args = std::env::args().skip(1);
+    let usage = || {
+        eprintln!("{USAGE}");
+        ExitCode::from(2)
+    };
     while let Some(arg) = args.next() {
-        match (arg.as_str(), args.next_if(|_| arg == "--bind")) {
-            ("--bind", Some(addr)) => bind = addr,
-            ("--hardware-fault", None) => hardware_fault = true,
-            _ => {
-                eprintln!("{USAGE}");
-                return ExitCode::from(2);
-            }
+        match arg.as_str() {
+            "--bind" => match args.next() {
+                Some(addr) => bind = addr,
+                None => return usage(),
+            },
+            "--clock-rate" => match args.next().map(|rate| rate.parse()) {
+                Some(Ok(rate)) if rate > 0 => clock_rate = rate,
+                _ => return usage(),
+            },
+            "--hardware-fault" => hardware_fault = true,
+            _ => return usage(),
         }
     }
 
@@ -57,7 +68,7 @@ fn main() -> ExitCode {
     println!("itch-sim listening on tcp://{}", listener.local_addr().unwrap());
     logs::init();
 
-    let sim = Sim { rig: Rig::new(), board: SimBoard::new(hardware_fault) };
+    let sim = Sim { rig: Rig::new(), board: SimBoard::new(clock_rate, hardware_fault) };
     let sim = Arc::new(Mutex::new(sim));
     thread::spawn({
         let sim = Arc::clone(&sim);

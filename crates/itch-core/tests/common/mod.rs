@@ -67,9 +67,14 @@ impl TestRig {
 
     /// Sends `request` and returns the error it was refused with.
     pub fn refused(&mut self, request: Request) -> ErrorCode {
+        self.refusal(request).0
+    }
+
+    /// Sends `request` and returns the error and `detail` it was refused with.
+    pub fn refusal(&mut self, request: Request) -> (ErrorCode, &'static str) {
         match self.send(request) {
             Response::Ok(reply) => panic!("accepted: {reply:?}"),
-            Response::Err { error, .. } => error,
+            Response::Err { error, detail, .. } => (error, detail),
         }
     }
 }

@@ -2,7 +2,7 @@ mod common;
 
 use common::TestRig;
 use itch_core::board::Counters;
-use itch_core::wire::{Reply, Request, StatusReply, WriteChannels};
+use itch_core::wire::{AcquireLease, Reply, Request, StatusReply, WriteChannels};
 
 fn status(rig: &mut TestRig) -> StatusReply<'static> {
     match rig.ok(Request::GetStatus) {
@@ -51,5 +51,16 @@ fn status_shows_the_holder_until_the_lease_is_released() {
     rig.ok(Request::WriteChannels(WriteChannels { token: 1, mask: 1, values: 1 }));
     assert_eq!(status(&mut rig).holder, "unknown");
     rig.ok(Request::ReleaseLease { token: 1 });
+    assert_eq!(status(&mut rig).holder, "");
+}
+
+#[test]
+fn status_names_the_holder_until_the_lease_expires() {
+    let mut rig = TestRig::new();
+    let holder = "qa@bench-pc test.py";
+    rig.ok(Request::AcquireLease(AcquireLease { token: 1, takeover: false, holder }));
+    rig.board.now = 9_999;
+    assert_eq!(status(&mut rig).holder, "qa@bench-pc test.py");
+    rig.board.now = 10_000;
     assert_eq!(status(&mut rig).holder, "");
 }
