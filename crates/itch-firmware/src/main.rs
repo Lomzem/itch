@@ -4,6 +4,8 @@
 #![no_std]
 #![no_main]
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use embassy_futures::select::{Either, select};
 use embassy_time::{Duration, Ticker, Timer};
 use esp_rtos::embassy::Executor;
@@ -13,7 +15,7 @@ use itch_core::rig::{Handled, Rig, SETTLE_MS};
 use itch_core::wire::LogLevel;
 use itch_firmware::board::{self, RealBoard};
 use itch_firmware::queue::{self, Payload, Transport};
-use itch_firmware::{logger, usb};
+use itch_firmware::{logger, supervisor, usb};
 use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -23,15 +25,23 @@ const TICK: Duration = Duration::from_millis(50);
 
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 
+/// Set by the first panic.
+static PANICKED: AtomicBool = AtomicBool::new(false);
+
 #[esp_hal::main]
 fn main() -> ! {
-    let board::Parts { mut board, usb_rx, usb_tx } = board::boot();
+    let board::Parts { mut board, watchdog, usb_rx, usb_tx } = board::boot();
     logger::init();
+    let last_panic = board.info().last_panic;
+    if !last_panic.is_empty() {
+        log::error!("the previous boot panicked at {last_panic}");
+    }
     EXECUTOR.init(Executor::new()).run(move |spawner| {
         let rig_logic = Rig::new(&mut board);
         if board.reinit().is_err() {
             log::error!("the expander didn't come up; holding it in reset");
         }
+        spawner.spawn(supervisor::supervisor(watchdog).unwrap());
         spawner.spawn(rig(rig_logic, board).unwrap());
         spawner.spawn(usb::usb_rx(usb_rx).unwrap());
         spawner.spawn(usb::usb_tx(usb_tx).unwrap());
@@ -50,6 +60,7 @@ async fn rig(mut rig: Rig, mut board: RealBoard) {
             Either::First(()) => {
                 rig.tick(&mut board);
                 board.tick();
+                supervisor::check_in();
                 continue;
             }
             Either::Second(request) => request,
@@ -83,10 +94,20 @@ async fn send_reply(transport: Transport, reply: Payload) {
     }
 }
 
-/// Opens every contact, then resets the whole chip. Never a CPU-only
-/// reset, which would leave the expander running.
+/// Opens every contact, leaves where the panic happened for the next boot,
+/// then resets the chip's digital core and peripherals. Never a CPU-only
+/// reset, which would leave the peripherals running. CPU exceptions end up
+/// here too.
 #[panic_handler]
-fn panic(_: &core::panic::PanicInfo) -> ! {
+fn panic(info: &core::panic::PanicInfo) -> ! {
     board::force_reset_low();
-    esp_hal::system::software_reset()
+    if !PANICKED.swap(true, Ordering::Relaxed) {
+        board::record_panic(info.location());
+        esp_hal::system::software_reset()
+    }
+    // A panic on the way to the reset, which takes an esp-hal lock: keep
+    // the first panic's record and let the RTC watchdog reset the chip.
+    loop {
+        core::hint::spin_loop();
+    }
 }

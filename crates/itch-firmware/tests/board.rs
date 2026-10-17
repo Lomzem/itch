@@ -133,3 +133,14 @@ fn an_expander_that_comes_back_gets_its_channels_restored() {
     bench.tick();
     assert_eq!(bench.driven(), (0x80, 0x81));
 }
+
+#[test]
+fn once_the_supervisor_trips_the_expander_stays_in_reset() {
+    let mut bench = Bench::boot();
+    bench.write(0xFFFF, 0x0181);
+    bench.trip_supervisor();
+    bench.tick();
+    bench.tick();
+    assert!(bench.expander.borrow().in_reset());
+    assert_eq!(bench.driven(), (0x00, 0x00));
+}
