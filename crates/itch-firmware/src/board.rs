@@ -4,7 +4,7 @@
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::OutputPin;
 use embedded_hal::i2c::I2c;
-use itch_core::board::{Board, BoardInfo, Counters};
+use itch_core::board::{Board, BoardInfo, Counters, HwFault};
 
 /// The MCP23017's I2C address: A0-A2 are tied to GND.
 const EXPANDER: u8 = 0x20;
@@ -63,7 +63,7 @@ pub struct RevA<I2C, RESET, LED, DELAY> {
     delay: DELAY,
     info: BoardInfo,
     chip: Chip,
-    /// The Channels last written, bit 0 = CH1.
+    /// The Channels last driven, bit 0 = CH1.
     outputs: u16,
     /// The last expander operation failed.
     faulted: bool,
@@ -86,18 +86,6 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> RevA<I2C, RESET
         Self { i2c, reset, led, delay, info, chip, outputs: 0, faulted: false, blink: false }
     }
 
-    /// Pulses RESET and brings the expander back up with every Channel off.
-    /// If it doesn't come up, it is held in reset, which keeps every
-    /// contact open.
-    pub fn reinit(&mut self) -> Result<(), ExpanderFault> {
-        let result = self.bring_up();
-        if result.is_err() {
-            let _ = self.reset.set_low();
-        }
-        self.faulted = result.is_err();
-        result
-    }
-
     /// Runs on every idle tick: blinks the status LED, once per tick, while
     /// the expander is faulted.
     pub fn tick(&mut self) {
@@ -112,9 +100,9 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> RevA<I2C, RESET
         let _ = self.led.set_state(lit.into());
     }
 
-    /// Clears the latches before the pins become outputs, so no contact
-    /// closes on the way, then reads the configuration back.
-    fn bring_up(&mut self) -> Result<(), ExpanderFault> {
+    /// Pulses RESET, sets every latch low and then every pin to an output,
+    /// and reads the configuration back.
+    fn bring_up(&mut self) -> Result<(), HwFault> {
         let _ = self.reset.set_low();
         // The MCP23017 needs a RESET pulse of at least 1 µs.
         self.delay.delay_us(10);
@@ -122,17 +110,31 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> RevA<I2C, RESET
         self.delay.delay_us(10);
         self.write_pair(OLATA, [0x00, 0x00])?;
         self.write_pair(IODIRA, [0x00, 0x00])?;
-        let mut iodir = [0xFF; 2];
-        self.i2c.write_read(EXPANDER, &[IODIRA], &mut iodir).map_err(|_| ExpanderFault)?;
-        if iodir != [0x00, 0x00] {
-            return Err(ExpanderFault);
+        if self.read_pair(IODIRA)? != [0x00, 0x00] {
+            return Err(HwFault);
         }
         Ok(())
     }
 
+    /// The Channels the expander drives. Pins that are no longer outputs
+    /// mean it lost its configuration, which is a fault.
+    fn driven(&mut self) -> Result<u16, HwFault> {
+        if self.read_pair(IODIRA)? != [0x00, 0x00] {
+            return Err(HwFault);
+        }
+        Ok(channels(self.read_pair(OLATA)?))
+    }
+
     /// Writes an A register and the B register after it.
-    fn write_pair(&mut self, register: u8, [a, b]: [u8; 2]) -> Result<(), ExpanderFault> {
-        self.i2c.write(EXPANDER, &[register, a, b]).map_err(|_| ExpanderFault)
+    fn write_pair(&mut self, register: u8, [a, b]: [u8; 2]) -> Result<(), HwFault> {
+        self.i2c.write(EXPANDER, &[register, a, b]).map_err(|_| HwFault)
+    }
+
+    /// Reads an A register and the B register after it.
+    fn read_pair(&mut self, register: u8) -> Result<[u8; 2], HwFault> {
+        let mut pair = [0; 2];
+        self.i2c.write_read(EXPANDER, &[register], &mut pair).map_err(|_| HwFault)?;
+        Ok(pair)
     }
 }
 
@@ -143,10 +145,35 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> Board
         self.info
     }
 
-    fn write_outputs(&mut self, state: u16) {
-        self.outputs = state;
-        self.faulted = self.write_pair(OLATA, ports(state)).is_err();
+    fn write_outputs(&mut self, state: u16) -> Result<(), HwFault> {
+        let result = self.write_pair(OLATA, ports(state));
+        if result.is_ok() {
+            self.outputs = state;
+        }
+        self.faulted = result.is_err();
         self.show_status();
+        result
+    }
+
+    fn read_outputs(&mut self) -> Result<u16, HwFault> {
+        let result = self.driven();
+        self.faulted = result.is_err();
+        self.show_status();
+        result
+    }
+
+    /// Clears the latches before the pins become outputs, so no contact
+    /// closes on the way. If the expander doesn't come up, it is held in
+    /// reset, which keeps every contact open.
+    fn reinit(&mut self) -> Result<(), HwFault> {
+        self.outputs = 0;
+        let result = self.bring_up();
+        if result.is_err() {
+            let _ = self.reset.set_low();
+        }
+        self.faulted = result.is_err();
+        self.show_status();
+        result
     }
 
     fn now(&self) -> u64 {
@@ -158,10 +185,6 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> Board
     }
 }
 
-/// The expander didn't answer or didn't take its configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ExpanderFault;
-
 /// Maps a canonical Channel state onto the expander's `[GPA, GPB]` pins.
 fn ports(state: u16) -> [u8; 2] {
     let mut ports = [0; 2];
@@ -171,6 +194,17 @@ fn ports(state: u16) -> [u8; 2] {
         }
     }
     ports
+}
+
+/// Maps the expander's `[GPA, GPB]` pins back onto a canonical Channel state.
+fn channels(ports: [u8; 2]) -> u16 {
+    let mut state = 0;
+    for (channel, &(port, pin)) in CHANNELS.iter().enumerate() {
+        if ports[port as usize] & 1 << pin != 0 {
+            state |= 1 << channel;
+        }
+    }
+    state
 }
 
 #[cfg(feature = "firmware")]

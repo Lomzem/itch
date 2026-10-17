@@ -1,10 +1,18 @@
-use itch_core::board::{Board, BoardInfo, Counters};
+use itch_core::board::{Board, BoardInfo, Counters, HwFault};
 
 /// A Board for host tests. Its facts match the `hello-ok` vector.
 pub struct FakeBoard {
     pub info: BoardInfo,
-    /// Every output write, oldest first. Bit 0 = CH1.
+    /// Every output write the expander took, oldest first. Bit 0 = CH1.
     pub writes: Vec<u16>,
+    /// What the expander drives now, as `read_outputs` reports it.
+    pub outputs: u16,
+    /// Times the expander was re-initialised, successfully or not.
+    pub reinits: u32,
+    /// The next expander operation fails, as after an I2C glitch.
+    pub glitch: bool,
+    /// Every expander operation fails, as if the expander were dead.
+    pub unreachable: bool,
     /// The clock in milliseconds, moved by hand.
     pub now: u64,
     pub counters: Counters,
@@ -23,9 +31,17 @@ impl FakeBoard {
                 last_panic: "",
             },
             writes: Vec::new(),
+            outputs: 0,
+            reinits: 0,
+            glitch: false,
+            unreachable: false,
             now: 0,
             counters: Counters::default(),
         }
+    }
+
+    fn reach(&mut self) -> Result<(), HwFault> {
+        if self.unreachable || std::mem::take(&mut self.glitch) { Err(HwFault) } else { Ok(()) }
     }
 }
 
@@ -34,8 +50,22 @@ impl Board for FakeBoard {
         self.info
     }
 
-    fn write_outputs(&mut self, state: u16) {
+    fn write_outputs(&mut self, state: u16) -> Result<(), HwFault> {
+        self.reach()?;
         self.writes.push(state);
+        self.outputs = state;
+        Ok(())
+    }
+
+    fn read_outputs(&mut self) -> Result<u16, HwFault> {
+        self.reach()?;
+        Ok(self.outputs)
+    }
+
+    fn reinit(&mut self) -> Result<(), HwFault> {
+        self.reinits += 1;
+        self.outputs = 0;
+        self.reach()
     }
 
     fn now(&self) -> u64 {

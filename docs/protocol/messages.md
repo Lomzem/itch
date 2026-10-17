@@ -65,7 +65,7 @@ Reply from Rig `60:55:F9:C0:27:18`, firmware `1.0.0`, clean, no features, board 
 
 ## GetChannels
 
-`0x02`. Reads the commanded Channel state. It needs no Lease.
+`0x02`. Reads the commanded Channel state. It needs no Lease. While the expander is held in reset (see [Expander faults](errors.md#expander-faults)), it reports every Channel off.
 
 Request body: empty.
 
@@ -90,7 +90,7 @@ Reply with CH1 and CH16 on:
 
 ## WriteChannels
 
-`0x03`. A Mask write: each Channel whose `mask` bit is set takes its `values` bit, and every other Channel stays as it was. It needs the Lease (see [Lease](README.md#lease)). The reply goes out once the contacts have settled.
+`0x03`. A Mask write: each Channel whose `mask` bit is set takes its `values` bit, and every other Channel stays as it was. It needs the Lease (see [Lease](README.md#lease)). The reply goes out once the contacts have settled. While the expander is held in reset it is refused with `HardwareFault`.
 
 Request body:
 
@@ -137,7 +137,7 @@ Refused with `LeaseLost` because `dev@laptop other.py` holds the Lease:
 
 ## Clear
 
-`0x04`. Turns every Channel off. It needs the Lease, and the reply goes out once the contacts have settled.
+`0x04`. Turns every Channel off. It needs the Lease, and the reply goes out once the contacts have settled. While the expander is held in reset it is refused with `HardwareFault`.
 
 Request body:
 

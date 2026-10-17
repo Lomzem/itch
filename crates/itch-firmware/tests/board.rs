@@ -1,7 +1,7 @@
 mod common;
 
 use common::{Bench, IODIRA, OLATA, Op};
-use itch_firmware::board::ExpanderFault;
+use itch_core::board::{Board, HwFault};
 
 #[test]
 fn each_channel_drives_its_contact_on_the_reversed_rev_a_wiring() {
@@ -51,7 +51,7 @@ fn boot_clears_the_output_latches_before_the_pins_become_outputs() {
 fn boot_holds_an_expander_that_does_not_take_its_configuration_in_reset() {
     let mut bench = Bench::power_on();
     bench.expander.borrow_mut().stuck = true;
-    assert_eq!(bench.board.reinit(), Err(ExpanderFault));
+    assert_eq!(bench.board.reinit(), Err(HwFault));
     assert!(bench.expander.borrow().in_reset());
 }
 
@@ -59,7 +59,7 @@ fn boot_holds_an_expander_that_does_not_take_its_configuration_in_reset() {
 fn boot_holds_an_expander_that_does_not_answer_in_reset() {
     let mut bench = Bench::power_on();
     bench.expander.borrow_mut().absent = true;
-    assert_eq!(bench.board.reinit(), Err(ExpanderFault));
+    assert_eq!(bench.board.reinit(), Err(HwFault));
     assert!(bench.expander.borrow().in_reset());
 }
 
@@ -89,4 +89,47 @@ fn the_status_led_blinks_after_a_channel_write_fails() {
     bench.expander.borrow_mut().absent = true;
     bench.write(0xFFFF, 0x0001);
     assert_eq!(bench.led_over(4), [true, false, true, false]);
+}
+
+#[test]
+fn a_tick_restores_the_channels_after_the_expander_browns_out() {
+    let mut bench = Bench::boot();
+    bench.write(0xFFFF, 0x0181);
+    bench.expander.borrow_mut().brown_out();
+    bench.tick();
+    assert_eq!(bench.driven(), (0x80, 0x81));
+    assert!(bench.led());
+}
+
+#[test]
+fn a_tick_leaves_a_healthy_expander_alone() {
+    let mut bench = Bench::boot();
+    bench.write(0xFFFF, 0x0181);
+    let ops = bench.expander.borrow().log.len();
+    bench.tick();
+    let log = &bench.expander.borrow().log;
+    // Reads only: a write longer than a register address would change something.
+    let changes =
+        |op: &Op| matches!(op, Op::Reset(_)) || matches!(op, Op::Write(bytes) if bytes.len() > 1);
+    assert!(!log[ops..].iter().any(changes), "{log:?}");
+}
+
+#[test]
+fn reads_back_the_channels_on_the_reversed_rev_a_wiring() {
+    let mut bench = Bench::boot();
+    bench.write(0xFFFF, 0x0181);
+    assert_eq!(bench.board.read_outputs(), Ok(0x0181));
+}
+
+#[test]
+fn an_expander_that_comes_back_gets_its_channels_restored() {
+    let mut bench = Bench::boot();
+    bench.write(0xFFFF, 0x0181);
+    bench.expander.borrow_mut().absent = true;
+    bench.tick();
+    bench.tick();
+    assert!(bench.expander.borrow().in_reset());
+    bench.expander.borrow_mut().absent = false;
+    bench.tick();
+    assert_eq!(bench.driven(), (0x80, 0x81));
 }

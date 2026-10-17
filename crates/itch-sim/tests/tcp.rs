@@ -110,6 +110,35 @@ fn status_counts_bad_frames_from_every_connection() {
 }
 
 #[test]
+fn a_hardware_fault_holds_every_channel_off_and_refuses_writes() {
+    let sim = Sim::start_with(&["--hardware-fault"]);
+    let mut stream = sim.connect();
+    let write = WriteChannels { token: 1, mask: 0x8001, values: 0x8001 };
+    let reply = exchange(&mut stream, 1, Request::WriteChannels(write));
+    assert!(matches!(reply, Response::Err { error: ErrorCode::HardwareFault, .. }), "{reply:?}");
+    let reply = exchange(&mut stream, 2, Request::GetChannels);
+    assert_eq!(reply, Response::Ok(Reply::GetChannels { state: 0 }));
+}
+
+#[test]
+fn a_hardware_fault_is_found_by_the_idle_tick() {
+    let sim = Sim::start_with(&["--hardware-fault"]);
+    let mut stream = sim.connect();
+    let started = Instant::now();
+    loop {
+        let Response::Ok(Reply::GetStatus(status)) = exchange(&mut stream, 1, Request::GetStatus)
+        else {
+            panic!("not a GetStatus reply");
+        };
+        if status.expander_faults == 1 {
+            return;
+        }
+        assert!(started.elapsed() < Duration::from_secs(2), "no tick found the fault");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
 fn a_faster_clock_lets_a_lease_lapse_in_real_milliseconds() {
     let sim = Sim::start_with(&["--clock-rate", "1000"]);
     let mut stream = sim.connect();
