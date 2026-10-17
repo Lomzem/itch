@@ -37,6 +37,15 @@ espflash save-image --chip esp32s3 --flash-size 8mb \
 espflash write-bin 0x0 itch-firmware.bin    # flashes it; the label survives
 ```
 
+For development away from a workstation, a `wifi` build also serves the Rig over TCP on port 7878 ([ADR 0003](docs/adr/0003-wifi-compiled-out-of-production-firmware.md): never give one to QA). It joins the WPA2 network named at build time:
+
+```sh
+export ITCH_WIFI_SSID=<network> ITCH_WIFI_PASSWORD=<passphrase>
+cargo +esp flash-firmware-wifi    # also build-firmware-wifi and clippy-firmware-wifi
+```
+
+The Rig logs `listening on tcp://<ip>:7878` once it has an address. Connect with `Rig.connect("tcp://<ip>:7878")`; `itch-py` warns that it's a development build. One client at a time can connect.
+
 ## Releases
 
 Each [release](https://github.com/Lomzem/itch/releases) attaches:

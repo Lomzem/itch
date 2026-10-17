@@ -7,6 +7,7 @@ use embedded_hal::i2c::I2c;
 use embedded_storage::nor_flash::NorFlash;
 use itch_core::board::{Board, BoardInfo, Counters, HwFault, StorageFault};
 use itch_core::label::Label;
+use itch_core::wire::FEATURE_WIFI;
 
 use crate::settings::Settings;
 
@@ -17,6 +18,9 @@ const EXPANDER: u8 = 0x20;
 /// followed by its B register, so one write sets both ports.
 const IODIRA: u8 = 0x00;
 const OLATA: u8 = 0x14;
+
+/// What `Hello` reports in `features`: a `wifi` build is a development build.
+const FEATURES: u8 = if cfg!(feature = "wifi") { FEATURE_WIFI } else { 0 };
 
 #[derive(Clone, Copy)]
 enum Port {
@@ -87,7 +91,7 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
             hardware_id: chip.hardware_id,
             firmware_version: env!("CARGO_PKG_VERSION"),
             dirty: false,
-            features: 0,
+            features: FEATURES,
             board_revision: "A",
             reset_reason: chip.reset_reason,
             last_panic: chip.last_panic,
@@ -260,7 +264,7 @@ mod esp32s3 {
     use super::{Chip, RevA};
     use crate::crash::{self, RECORD_LEN, Record};
     use crate::supervisor::{self, ResetLine};
-    use crate::{logger, usb};
+    use crate::{logger, queue, usb};
 
     /// The expander's RESET is GPIO6, pulled low on the board.
     const RESET_GPIO: u8 = 6;
@@ -300,6 +304,9 @@ mod esp32s3 {
         /// USB Serial/JTAG, which keeps espflash's auto-reset on the same cable.
         pub usb_rx: UsbRx,
         pub usb_tx: UsbTx,
+        /// The radio, for the development-only WiFi transport.
+        #[cfg(feature = "wifi")]
+        pub wifi: esp_hal::peripherals::WIFI<'static>,
     }
 
     /// Boots the chip. The expander RESET is driven low before anything
@@ -345,7 +352,14 @@ mod esp32s3 {
         let reset = ResetLine::new(reset, &supervisor::TRIPPED);
         let flash = FlashStorage::new(p.FLASH);
         let board = RevA::new(i2c, reset, led, Delay::new(), flash, chip);
-        Parts { board, watchdog, usb_rx, usb_tx }
+        Parts {
+            board,
+            watchdog,
+            usb_rx,
+            usb_tx,
+            #[cfg(feature = "wifi")]
+            wifi: p.WIFI,
+        }
     }
 
     /// Takes the crash record the previous boot left, clearing it so it is
@@ -374,8 +388,8 @@ mod esp32s3 {
     fn counters() -> Counters {
         let load = |counter: &AtomicU32| counter.load(Ordering::Relaxed);
         Counters {
-            crc_failures: load(&usb::CRC_FAILURES),
-            oversized_frames: load(&usb::OVERSIZED_FRAMES),
+            crc_failures: load(&queue::CRC_FAILURES),
+            oversized_frames: load(&queue::OVERSIZED_FRAMES),
             dropped_logs: load(&logger::DROPPED_LOGS),
             usb_tx_dropped: load(&usb::TX_DROPPED),
         }

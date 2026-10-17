@@ -7,15 +7,15 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::{Channel, TrySendError};
+use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, with_timeout};
-use itch_core::frame::{FrameDecoder, FrameError, MAX_FRAME, MAX_PAYLOAD, encode_frame};
+use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::logs::LogQueue;
 use itch_core::wire::LogLevel;
 
 use crate::board::{UsbRx, UsbTx};
-use crate::queue::{self, Payload, Queued, Transport};
+use crate::queue::{self, Replies, Transport};
 
 /// How long one frame may take to go out. After that the rest of it is
 /// dropped, so a host that stops reading never stalls the Rig.
@@ -24,17 +24,11 @@ const WRITE_TIMEOUT: Duration = Duration::from_millis(100);
 /// Room for one full-length Log Event or many short ones.
 const LOG_BYTES: usize = 4 * 1024;
 
-/// Frames dropped for a bad CRC: the Rig's `crc_failures` counter.
-pub static CRC_FAILURES: AtomicU32 = AtomicU32::new(0);
-
-/// Frames dropped for being oversized: `oversized_frames`.
-pub static OVERSIZED_FRAMES: AtomicU32 = AtomicU32::new(0);
-
 /// Frames cut short by the write timeout: `usb_tx_dropped`.
 pub static TX_DROPPED: AtomicU32 = AtomicU32::new(0);
 
 /// Replies waiting for `usb_tx`.
-pub static REPLIES: Channel<CriticalSectionRawMutex, Payload, 2> = Channel::new();
+pub static REPLIES: Replies = Channel::new();
 
 /// Log Events waiting for `usb_tx`, filtered by the USB log level.
 pub static LOGS: Mutex<CriticalSectionRawMutex, RefCell<LogQueue<LOG_BYTES>>> =
@@ -47,8 +41,7 @@ pub fn set_log_level(level: LogLevel) {
     LOGS.lock(|logs| logs.borrow_mut().set_level(level));
 }
 
-/// Turns the bytes from the host into queued requests. A request that finds
-/// the queue full is answered `Busy` at once.
+/// Turns the bytes from the host into queued requests.
 #[embassy_executor::task]
 pub async fn usb_rx(mut rx: UsbRx) {
     let mut decoder = FrameDecoder::new();
@@ -56,26 +49,8 @@ pub async fn usb_rx(mut rx: UsbRx) {
     loop {
         let Ok(read) = embedded_io_async::Read::read(&mut rx, &mut bytes).await;
         for &byte in &bytes[..read] {
-            let payload = match decoder.push(byte) {
-                None => continue,
-                Some(Ok(payload)) => payload,
-                Some(Err(FrameError::Corrupt)) => {
-                    log::warn!("dropped a corrupt frame");
-                    CRC_FAILURES.fetch_add(1, Ordering::Relaxed);
-                    continue;
-                }
-                Some(Err(FrameError::Oversized)) => {
-                    log::warn!("dropped a frame over {MAX_PAYLOAD} bytes");
-                    OVERSIZED_FRAMES.fetch_add(1, Ordering::Relaxed);
-                    continue;
-                }
-            };
-            let request = Queued { transport: Transport::Usb, payload: Payload::new(payload) };
-            if let Err(TrySendError::Full(request)) = queue::REQUESTS.try_send(request)
-                && let Some(busy) = queue::busy(request.payload.as_bytes())
-            {
-                // With replies backed up too, the client times out and retries.
-                let _ = REPLIES.try_send(busy);
+            if let Some(frame) = decoder.push(byte) {
+                queue::receive(Transport::Usb, frame, &REPLIES);
             }
         }
     }

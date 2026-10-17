@@ -2,6 +2,7 @@ mod common;
 
 use common::{Bench, IODIRA, OLATA, Op};
 use itch_core::board::{Board, HwFault};
+use itch_core::wire::FEATURE_WIFI;
 
 #[test]
 fn each_channel_drives_its_contact_on_the_reversed_rev_a_wiring() {
@@ -143,4 +144,10 @@ fn once_the_supervisor_trips_the_expander_stays_in_reset() {
     bench.tick();
     assert!(bench.expander.borrow().in_reset());
     assert_eq!(bench.driven(), (0x00, 0x00));
+}
+
+#[test]
+fn a_production_build_does_not_report_wifi() {
+    let bench = Bench::boot();
+    assert_eq!(bench.board.info().features & FEATURE_WIFI, 0);
 }

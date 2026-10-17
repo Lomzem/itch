@@ -1,5 +1,14 @@
 //! The `rig` task's request queue, fed by every transport.
 
+#[cfg(feature = "firmware")]
+use core::sync::atomic::{AtomicU32, Ordering};
+
+#[cfg(feature = "firmware")]
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+#[cfg(feature = "firmware")]
+use embassy_sync::channel::{Channel, TrySendError};
+#[cfg(feature = "firmware")]
+use itch_core::frame::FrameError;
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::wire::{ErrorCode, Message, Response};
 
@@ -11,15 +20,53 @@ pub const DEPTH: usize = 4;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
     Usb,
+    /// The development-only WiFi transport.
+    #[cfg(feature = "wifi")]
+    Tcp,
 }
 
 /// Requests waiting for the `rig` task, in arrival order.
 #[cfg(feature = "firmware")]
-pub static REQUESTS: embassy_sync::channel::Channel<
-    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
-    Queued,
-    DEPTH,
-> = embassy_sync::channel::Channel::new();
+pub static REQUESTS: Channel<CriticalSectionRawMutex, Queued, DEPTH> = Channel::new();
+
+/// A transport's replies, waiting for its writer.
+#[cfg(feature = "firmware")]
+pub type Replies = Channel<CriticalSectionRawMutex, Payload, 2>;
+
+/// Frames dropped for a bad CRC, on any transport: the Rig's `crc_failures`
+/// counter.
+#[cfg(feature = "firmware")]
+pub static CRC_FAILURES: AtomicU32 = AtomicU32::new(0);
+
+/// Frames dropped for being oversized, on any transport: `oversized_frames`.
+#[cfg(feature = "firmware")]
+pub static OVERSIZED_FRAMES: AtomicU32 = AtomicU32::new(0);
+
+/// Queues a frame a transport decoded, or counts why it was dropped. A
+/// request that finds the queue full is answered `Busy` at once.
+#[cfg(feature = "firmware")]
+pub fn receive(transport: Transport, frame: Result<&[u8], FrameError>, replies: &Replies) {
+    let payload = match frame {
+        Ok(payload) => payload,
+        Err(FrameError::Corrupt) => {
+            log::warn!("dropped a corrupt frame");
+            CRC_FAILURES.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+        Err(FrameError::Oversized) => {
+            log::warn!("dropped a frame over {MAX_PAYLOAD} bytes");
+            OVERSIZED_FRAMES.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+    };
+    let request = Queued { transport, payload: Payload::new(payload) };
+    if let Err(TrySendError::Full(request)) = REQUESTS.try_send(request)
+        && let Some(busy) = busy(request.payload.as_bytes())
+    {
+        // With replies backed up too, the client times out and retries.
+        let _ = replies.try_send(busy);
+    }
+}
 
 /// A request waiting for the `rig` task.
 pub struct Queued {

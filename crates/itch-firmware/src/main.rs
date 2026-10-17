@@ -30,7 +30,14 @@ static PANICKED: AtomicBool = AtomicBool::new(false);
 
 #[esp_hal::main]
 fn main() -> ! {
-    let board::Parts { mut board, watchdog, usb_rx, usb_tx } = board::boot();
+    let board::Parts {
+        mut board,
+        watchdog,
+        usb_rx,
+        usb_tx,
+        #[cfg(feature = "wifi")]
+        wifi,
+    } = board::boot();
     logger::init();
     let last_panic = board.info().last_panic;
     if !last_panic.is_empty() {
@@ -45,6 +52,8 @@ fn main() -> ! {
         spawner.spawn(rig(rig_logic, board).unwrap());
         spawner.spawn(usb::usb_rx(usb_rx).unwrap());
         spawner.spawn(usb::usb_tx(usb_tx).unwrap());
+        #[cfg(feature = "wifi")]
+        itch_firmware::tcp::start(spawner, wifi);
     })
 }
 
@@ -85,12 +94,16 @@ async fn rig(mut rig: Rig, mut board: RealBoard) {
 fn set_log_level(transport: Transport, level: LogLevel) {
     match transport {
         Transport::Usb => usb::set_log_level(level),
+        #[cfg(feature = "wifi")]
+        Transport::Tcp => itch_firmware::tcp::set_log_level(level),
     }
 }
 
 async fn send_reply(transport: Transport, reply: Payload) {
     match transport {
         Transport::Usb => usb::REPLIES.send(reply).await,
+        #[cfg(feature = "wifi")]
+        Transport::Tcp => itch_firmware::tcp::reply(reply).await,
     }
 }
 

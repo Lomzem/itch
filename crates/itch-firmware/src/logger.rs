@@ -5,6 +5,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use log::{LevelFilter, Log, Metadata, Record};
 
+#[cfg(feature = "wifi")]
+use crate::tcp;
 use crate::usb;
 
 /// Log Events dropped because a transport's queue was full: the Rig's
@@ -33,6 +35,15 @@ impl Log for Logger {
             DROPPED_LOGS.fetch_add(1, Ordering::Relaxed);
         }
         usb::LOGGED.signal(());
+        #[cfg(feature = "wifi")]
+        {
+            let full =
+                tcp::LOGS.lock(|logs| logs.borrow_mut().push(record.level(), *record.args()));
+            if full.is_err() {
+                DROPPED_LOGS.fetch_add(1, Ordering::Relaxed);
+            }
+            tcp::LOGGED.signal(());
+        }
     }
 
     fn flush(&self) {}
