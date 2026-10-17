@@ -7,7 +7,7 @@ use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::SETTLE_MS;
 use itch_core::wire::{
     AcquireLease, ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request,
-    Response, StatusReply, WriteChannels,
+    Response, SetLabel, StatusReply, WriteChannels,
 };
 
 #[test]
@@ -123,6 +123,20 @@ fn a_faster_clock_lets_a_lease_lapse_in_real_milliseconds() {
     std::thread::sleep(Duration::from_millis(20));
     let reply = exchange(&mut stream, 3, acquire(2));
     assert_eq!(reply, Response::Ok(Reply::AcquireLease { ttl_ms: 10_000 }));
+}
+
+#[test]
+fn a_label_lasts_for_the_run_unless_storage_faults() {
+    let sim = Sim::start();
+    let set = |label| Request::SetLabel(SetLabel { token: 1, label });
+    exchange(&mut sim.connect(), 1, set("bench3"));
+    assert_eq!(hello(&mut sim.connect(), 2).label, "bench3");
+
+    let faulty = Sim::start_with(&["--storage-fault"]);
+    let Response::Err { error, .. } = exchange(&mut faulty.connect(), 1, set("bench3")) else {
+        panic!("the label was saved");
+    };
+    assert_eq!(error, ErrorCode::StorageFault);
 }
 
 struct Sim {

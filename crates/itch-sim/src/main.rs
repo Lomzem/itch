@@ -16,13 +16,16 @@ use itch_core::rig::{Handled, Rig, SETTLE_MS};
 use logs::ConnectionLogs;
 use sim_board::{CRC_FAILURES, OVERSIZED_FRAMES, SimBoard};
 
-const USAGE: &str = "usage: itch-sim [--bind ADDR] [--clock-rate N]
+const USAGE: &str = "usage: itch-sim [--bind ADDR] [--clock-rate N] [--storage-fault]
 
 Serves a simulated Rig over TCP, by default on 127.0.0.1 with a free port.
 Once listening it prints one line: `itch-sim listening on tcp://HOST:PORT`.
 
 --clock-rate N runs the Rig's clock N times faster than real time, so a test
-can let a Lease lapse without waiting 10 s.";
+can let a Lease lapse without waiting 10 s.
+
+The label lives in memory, so every run starts with the default label.
+--storage-fault makes every label save fail with `StorageFault`.";
 
 /// The one simulated Rig, shared by every connection.
 struct Sim {
@@ -33,18 +36,23 @@ struct Sim {
 fn main() -> ExitCode {
     let mut bind = String::from("127.0.0.1:0");
     let mut clock_rate = 1;
+    let mut storage_fault = false;
     let mut args = std::env::args().skip(1);
     let usage = || {
         eprintln!("{USAGE}");
         ExitCode::from(2)
     };
     while let Some(arg) = args.next() {
-        match (arg.as_str(), args.next()) {
-            ("--bind", Some(addr)) => bind = addr,
-            ("--clock-rate", Some(rate)) => match rate.parse() {
-                Ok(rate) if rate > 0 => clock_rate = rate,
+        match arg.as_str() {
+            "--bind" => match args.next() {
+                Some(addr) => bind = addr,
+                None => return usage(),
+            },
+            "--clock-rate" => match args.next().map(|rate| rate.parse()) {
+                Some(Ok(rate)) if rate > 0 => clock_rate = rate,
                 _ => return usage(),
             },
+            "--storage-fault" => storage_fault = true,
             _ => return usage(),
         }
     }
@@ -59,7 +67,8 @@ fn main() -> ExitCode {
     println!("itch-sim listening on tcp://{}", listener.local_addr().unwrap());
     logs::init();
 
-    let sim = Arc::new(Mutex::new(Sim { rig: Rig::new(), board: SimBoard::new(clock_rate) }));
+    let mut board = SimBoard::new(clock_rate, storage_fault);
+    let sim = Arc::new(Mutex::new(Sim { rig: Rig::new(&mut board), board }));
     for stream in listener.incoming().flatten() {
         let sim = Arc::clone(&sim);
         thread::spawn(move || serve(stream, &sim));

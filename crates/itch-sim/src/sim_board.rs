@@ -1,7 +1,8 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use itch_core::board::{Board, BoardInfo, Counters};
+use itch_core::board::{Board, BoardInfo, Counters, StorageFault};
+use itch_core::label::Label;
 
 use crate::logs::DROPPED_LOGS;
 
@@ -17,10 +18,14 @@ pub struct SimBoard {
     booted: Instant,
     /// How many times faster than real time the clock runs.
     clock_rate: u32,
+    /// The saved label, for this run only.
+    label: Option<Label>,
+    /// Makes every label save fail.
+    storage_fault: bool,
 }
 
 impl SimBoard {
-    pub fn new(clock_rate: u32) -> Self {
+    pub fn new(clock_rate: u32, storage_fault: bool) -> Self {
         Self {
             info: BoardInfo {
                 // A locally administered MAC, so it can't clash with a real Rig.
@@ -35,6 +40,8 @@ impl SimBoard {
             },
             booted: Instant::now(),
             clock_rate,
+            label: None,
+            storage_fault,
         }
     }
 }
@@ -58,5 +65,17 @@ impl Board for SimBoard {
             dropped_logs: DROPPED_LOGS.load(Ordering::Relaxed),
             usb_tx_dropped: 0,
         }
+    }
+
+    fn load_label(&mut self) -> Option<Label> {
+        self.label
+    }
+
+    fn save_label(&mut self, label: &str) -> Result<(), StorageFault> {
+        if self.storage_fault {
+            return Err(StorageFault);
+        }
+        self.label = Label::new(label);
+        Ok(())
     }
 }
