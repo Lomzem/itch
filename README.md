@@ -4,6 +4,7 @@ sw-itch
 Firmware, simulator and protocol spec for itch Rigs. Terms are defined in [GLOSSARY.md](GLOSSARY.md).
 
 - `crates/itch-core`: the hardware-free `no_std` core: TAFP framing, the wire codec and Rig logic.
+- `crates/itch-firmware`: the Rig firmware for the ESP32-S3 Rev A board, built on `itch-core`.
 - `crates/itch-sim`: a simulated Rig serving the protocol over TCP.
 - `docs/protocol/`: the protocol spec and its conformance vectors.
 
@@ -12,6 +13,16 @@ Firmware, simulator and protocol spec for itch Rigs. Terms are defined in [GLOSS
 ```sh
 cargo test --workspace
 cargo run -p itch-sim    # prints `itch-sim listening on tcp://127.0.0.1:<port>`
+```
+
+### Firmware
+
+The firmware needs the `esp` Rust toolchain from [espup](https://github.com/esp-rs/espup) (`espup install`) and [espflash](https://github.com/esp-rs/espflash). Host `cargo test` covers the board support that needs no chip; the rest is checked on the bench.
+
+```sh
+cargo +esp build-firmware    # target/xtensa-esp32s3-none-elf/firmware/itch-firmware
+cargo +esp flash-firmware    # flashes a Rig over its USB-C port
+cargo +esp clippy-firmware
 ```
 
 ## Releases

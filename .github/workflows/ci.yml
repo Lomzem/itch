@@ -28,3 +28,17 @@ jobs:
       - run: rustup default stable
       # Any bare-metal target proves itch-core needs no std.
       - run: cargo build -p itch-core --target thumbv7em-none-eabihf
+
+  firmware:
+    runs-on: ubuntu-24.04
+    env:
+      # espup queries the GitHub API; unauthenticated calls hit rate limits.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: esp-rs/xtensa-toolchain@v1.7.0
+        with:
+          buildtargets: esp32s3
+          version: "1.97.0.0"
+      - run: cargo +esp clippy-firmware
+      - run: cargo +esp build-firmware
