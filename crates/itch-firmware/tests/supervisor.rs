@@ -38,3 +38,14 @@ fn a_missed_deadline_stays_missed_when_the_rig_comes_back() {
     assert_eq!(supervisor.check(2, 1100), Check::Missed);
     assert!(latch.tripped());
 }
+
+#[test]
+fn a_rig_that_checks_in_late_has_still_missed_its_deadline() {
+    // `rig` blocked the executor, so the supervisor only sees its next
+    // check-in once both run again.
+    let latch = Latch::new();
+    let mut supervisor = Supervisor::new(&latch, 0);
+    assert_eq!(supervisor.check(1, 50), Check::Fresh);
+    assert_eq!(supervisor.check(2, 1300), Check::Missed);
+    assert!(latch.tripped());
+}

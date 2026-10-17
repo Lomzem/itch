@@ -95,14 +95,15 @@ impl<'a> Supervisor<'a> {
         Self { latch, check_ins: 0, since: now }
     }
 
-    /// Checks `rig` given its check-in count, tripping `latch` on a miss.
+    /// Checks `rig` given its check-in count, tripping `latch` on a miss. A
+    /// check-in that arrives after the deadline is still a miss.
     pub fn check(&mut self, check_ins: u32, now: u64) -> Check {
+        if now.saturating_sub(self.since) >= DEADLINE_MS {
+            self.latch.trip();
+        }
         if check_ins != self.check_ins {
             self.check_ins = check_ins;
             self.since = now;
-        }
-        if now.saturating_sub(self.since) >= DEADLINE_MS {
-            self.latch.trip();
         }
         if self.latch.tripped() { Check::Missed } else { Check::Fresh }
     }
