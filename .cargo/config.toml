@@ -3,6 +3,11 @@
 build-firmware = "build --locked -p itch-firmware --bin itch-firmware --features firmware --target xtensa-esp32s3-none-elf -Zbuild-std=core --profile firmware"
 clippy-firmware = "clippy --locked -p itch-firmware --bin itch-firmware --features firmware --target xtensa-esp32s3-none-elf -Zbuild-std=core --profile firmware -- -D warnings"
 flash-firmware = "run --locked -p itch-firmware --bin itch-firmware --features firmware --target xtensa-esp32s3-none-elf -Zbuild-std=core --profile firmware"
+# Development builds with WiFi (ADR 0003). They need ITCH_WIFI_SSID and
+# ITCH_WIFI_PASSWORD set, and the radio needs `alloc`.
+build-firmware-wifi = "build --locked -p itch-firmware --bin itch-firmware --features wifi --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --profile firmware"
+clippy-firmware-wifi = "clippy --locked -p itch-firmware --bin itch-firmware --features wifi --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --profile firmware -- -D warnings"
+flash-firmware-wifi = "run --locked -p itch-firmware --bin itch-firmware --features wifi --target xtensa-esp32s3-none-elf -Zbuild-std=core,alloc --profile firmware"
 
 [target.xtensa-esp32s3-none-elf]
 runner = "espflash flash --chip esp32s3"

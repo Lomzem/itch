@@ -6,6 +6,7 @@ use embedded_hal::digital::OutputPin;
 use embedded_hal::i2c::I2c;
 use itch_core::board::{Board, BoardInfo, Counters, HwFault, StorageFault};
 use itch_core::label::Label;
+use itch_core::wire::FEATURE_WIFI;
 
 /// The MCP23017's I2C address: A0-A2 are tied to GND.
 const EXPANDER: u8 = 0x20;
@@ -14,6 +15,9 @@ const EXPANDER: u8 = 0x20;
 /// followed by its B register, so one write sets both ports.
 const IODIRA: u8 = 0x00;
 const OLATA: u8 = 0x14;
+
+/// What `Hello` reports in `features`: a `wifi` build is a development build.
+const FEATURES: u8 = if cfg!(feature = "wifi") { FEATURE_WIFI } else { 0 };
 
 #[derive(Clone, Copy)]
 enum Port {
@@ -84,7 +88,7 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> RevA<I2C, RESET
             hardware_id: chip.hardware_id,
             firmware_version: env!("CARGO_PKG_VERSION"),
             dirty: false,
-            features: 0,
+            features: FEATURES,
             board_revision: "A",
             reset_reason: chip.reset_reason,
             last_panic: chip.last_panic,
@@ -292,6 +296,9 @@ mod esp32s3 {
         /// USB Serial/JTAG, which keeps espflash's auto-reset on the same cable.
         pub usb_rx: UsbRx,
         pub usb_tx: UsbTx,
+        /// The radio, for the development-only WiFi transport.
+        #[cfg(feature = "wifi")]
+        pub wifi: esp_hal::peripherals::WIFI<'static>,
     }
 
     /// Boots the chip. The expander RESET is driven low before anything
@@ -335,7 +342,14 @@ mod esp32s3 {
         };
         let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
         let reset = ResetLine::new(reset, &supervisor::TRIPPED);
-        Parts { board: RevA::new(i2c, reset, led, Delay::new(), chip), watchdog, usb_rx, usb_tx }
+        Parts {
+            board: RevA::new(i2c, reset, led, Delay::new(), chip),
+            watchdog,
+            usb_rx,
+            usb_tx,
+            #[cfg(feature = "wifi")]
+            wifi: p.WIFI,
+        }
     }
 
     /// Takes the crash record the previous boot left, clearing it so it is

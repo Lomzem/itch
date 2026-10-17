@@ -20,6 +20,9 @@ pub const DEPTH: usize = 4;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
     Usb,
+    /// The development-only WiFi transport.
+    #[cfg(feature = "wifi")]
+    Tcp,
 }
 
 /// Requests waiting for the `rig` task, in arrival order.

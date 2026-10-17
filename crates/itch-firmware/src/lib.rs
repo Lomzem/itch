@@ -11,5 +11,7 @@ pub mod crash;
 pub mod logger;
 pub mod queue;
 pub mod supervisor;
+#[cfg(feature = "wifi")]
+pub mod tcp;
 #[cfg(feature = "firmware")]
 pub mod usb;
