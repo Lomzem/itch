@@ -4,6 +4,8 @@
 #![no_std]
 #![no_main]
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use embassy_futures::select::{Either, select};
 use embassy_time::{Duration, Ticker, Timer};
 use esp_rtos::embassy::Executor;
@@ -22,6 +24,9 @@ esp_bootloader_esp_idf::esp_app_desc!();
 const TICK: Duration = Duration::from_millis(50);
 
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
+
+/// Set by the first panic.
+static PANICKED: AtomicBool = AtomicBool::new(false);
 
 #[esp_hal::main]
 fn main() -> ! {
@@ -90,11 +95,19 @@ async fn send_reply(transport: Transport, reply: Payload) {
 }
 
 /// Opens every contact, leaves where the panic happened for the next boot,
-/// then resets the whole chip. Never a CPU-only reset, which would leave
-/// the expander running.
+/// then resets the chip's digital core and peripherals. Never a CPU-only
+/// reset, which would leave the peripherals running. CPU exceptions end up
+/// here too.
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     board::force_reset_low();
-    board::record_panic(info.location());
-    esp_hal::system::software_reset()
+    if !PANICKED.swap(true, Ordering::Relaxed) {
+        board::record_panic(info.location());
+        esp_hal::system::software_reset()
+    }
+    // A panic on the way to the reset, which takes an esp-hal lock: keep
+    // the first panic's record and let the RTC watchdog reset the chip.
+    loop {
+        core::hint::spin_loop();
+    }
 }
