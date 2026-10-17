@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
+use itch_core::frame::{FrameDecoder, FrameError, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::{Handled, Rig, SETTLE_MS};
 use sim_board::SimBoard;
 
@@ -66,12 +66,21 @@ fn serve(mut stream: TcpStream, sim: &Mutex<Sim>) -> io::Result<()> {
             return Ok(());
         }
         for &byte in &input[..read] {
-            let Some(Ok(request)) = decoder.push(byte) else {
-                continue;
-            };
-            let handled = {
-                let Sim { rig, board } = &mut *sim.lock().unwrap();
-                rig.handle(request, board, &mut reply)
+            let handled = match decoder.push(byte) {
+                None => continue,
+                Some(Err(error)) => {
+                    let counters = &mut sim.lock().unwrap().board.counters;
+                    let counter = match error {
+                        FrameError::Corrupt => &mut counters.crc_failures,
+                        FrameError::Oversized => &mut counters.oversized_frames,
+                    };
+                    *counter = counter.wrapping_add(1);
+                    continue;
+                }
+                Some(Ok(request)) => {
+                    let Sim { rig, board } = &mut *sim.lock().unwrap();
+                    rig.handle(request, board, &mut reply)
+                }
             };
             if let Handled::Reply { len, settle } = handled {
                 if settle {

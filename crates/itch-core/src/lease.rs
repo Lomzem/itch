@@ -9,6 +9,9 @@ pub(crate) const TTL_MS: u32 = 10_000;
 /// Token 0 means "no token".
 const NO_TOKEN: u64 = 0;
 
+/// The Holder of a Lease claimed by a request that names none.
+const UNKNOWN_HOLDER: &str = "unknown";
+
 #[derive(Default)]
 pub(crate) struct Lease {
     held: Option<Held>,
@@ -41,6 +44,14 @@ impl Lease {
     pub(crate) fn release(&mut self, token: u64) {
         if self.held.as_ref().is_some_and(|held| held.token == token) {
             self.held = None;
+        }
+    }
+
+    /// The current Holder, or "" when the Rig is free.
+    pub(crate) fn holder(&self) -> &str {
+        match self.held {
+            Some(_) => UNKNOWN_HOLDER,
+            None => "",
         }
     }
 }

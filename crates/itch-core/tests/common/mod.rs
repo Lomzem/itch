@@ -29,16 +29,22 @@ impl TestRig {
     pub fn send(&mut self, request: Request) -> Response<'static> {
         let mut payload = [0; MAX_PAYLOAD];
         let len = Message::Request { request_id: 7, request }.encode(&mut payload);
-        let mut reply = [0; MAX_PAYLOAD];
-        let Handled::Reply { len, settle } =
-            self.rig.handle(&payload[..len], &mut self.board, &mut reply)
-        else {
-            panic!("no reply");
-        };
-        self.settled = settle;
-        match Message::decode(reply[..len].to_vec().leak()) {
+        let reply = self.raw(&payload[..len]).expect("no reply");
+        match Message::decode(reply.leak()) {
             Ok(Message::Response { request_id: 7, response }) => response,
             other => panic!("not a response to the request: {other:?}"),
+        }
+    }
+
+    /// Sends a raw payload and returns the reply payload, if any.
+    pub fn raw(&mut self, payload: &[u8]) -> Option<Vec<u8>> {
+        let mut reply = [0; MAX_PAYLOAD];
+        match self.rig.handle(payload, &mut self.board, &mut reply) {
+            Handled::NoReply => None,
+            Handled::Reply { len, settle } => {
+                self.settled = settle;
+                Some(reply[..len].to_vec())
+            }
         }
     }
 

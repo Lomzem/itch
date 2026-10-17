@@ -4,7 +4,7 @@ use crate::label::Label;
 use crate::lease::{self, Lease};
 use crate::wire::{
     CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, Message, PROTOCOL, Reply, Request,
-    RequestType, Response,
+    RequestType, Response, StatusReply,
 };
 
 /// How long the transport waits after a Channel write before replying, so
@@ -28,6 +28,10 @@ pub struct Rig {
     lease: Lease,
     /// The commanded Channel state, bit 0 = CH1.
     channels: u16,
+    /// Payloads dropped for being under 5 bytes.
+    malformed_frames: u32,
+    /// Times the expander was found faulty and re-initialised.
+    expander_faults: u32,
 }
 
 impl Rig {
@@ -43,10 +47,10 @@ impl Rig {
         reply: &mut [u8; MAX_PAYLOAD],
     ) -> Handled {
         let Some((&request_type, rest)) = request.split_first() else {
-            return Handled::NoReply;
+            return self.drop_malformed();
         };
         let Some((request_id, body)) = rest.split_first_chunk() else {
-            return Handled::NoReply;
+            return self.drop_malformed();
         };
         let request_id = u32::from_le_bytes(*request_id);
         let decoded = RequestType::from_u8(request_type)
@@ -67,8 +71,13 @@ impl Rig {
         Handled::Reply { len, settle }
     }
 
+    fn drop_malformed(&mut self) -> Handled {
+        self.malformed_frames = self.malformed_frames.wrapping_add(1);
+        Handled::NoReply
+    }
+
     fn apply<'a, B: Board>(
-        &mut self,
+        &'a mut self,
         request: Request,
         board: &mut B,
         label: &'a Label,
@@ -88,6 +97,22 @@ impl Rig {
                 })
             }
             Request::GetChannels => Reply::GetChannels { state: self.channels },
+            Request::GetStatus => {
+                let info = board.info();
+                let counters = board.counters();
+                Reply::GetStatus(StatusReply {
+                    uptime_ms: board.now(),
+                    reset_reason: info.reset_reason,
+                    last_panic: info.last_panic,
+                    holder: self.lease.holder(),
+                    crc_failures: counters.crc_failures,
+                    oversized_frames: counters.oversized_frames,
+                    malformed_frames: self.malformed_frames,
+                    dropped_logs: counters.dropped_logs,
+                    expander_faults: self.expander_faults,
+                    usb_tx_dropped: counters.usb_tx_dropped,
+                })
+            }
             Request::WriteChannels(write) => {
                 self.lease.hold(write.token)?;
                 let state = self.channels & !write.mask | write.values & write.mask;
