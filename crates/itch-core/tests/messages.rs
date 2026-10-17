@@ -4,7 +4,7 @@ use common::{cases, hex, vectors};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::wire::{
     AcquireLease, DecodeError, ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, PROTOCOL,
-    RenewLease, Reply, Request, RequestType, Response, StatusReply, WriteChannels,
+    RenewLease, Reply, Request, RequestType, Response, SetLabel, StatusReply, WriteChannels,
 };
 use serde_json::Value;
 
@@ -76,6 +76,7 @@ fn request_type(name: &str) -> RequestType {
         "WriteChannels" => RequestType::WriteChannels,
         "Clear" => RequestType::Clear,
         "GetStatus" => RequestType::GetStatus,
+        "SetLabel" => RequestType::SetLabel,
         "AcquireLease" => RequestType::AcquireLease,
         "RenewLease" => RequestType::RenewLease,
         "ReleaseLease" => RequestType::ReleaseLease,
@@ -95,6 +96,10 @@ fn request(request_type: RequestType, json: &Value) -> Request<'_> {
         }),
         RequestType::Clear => Request::Clear { token: token(&json["token"]) },
         RequestType::GetStatus => Request::GetStatus,
+        RequestType::SetLabel => Request::SetLabel(SetLabel {
+            token: token(&json["token"]),
+            label: json["label"].as_str().unwrap(),
+        }),
         RequestType::AcquireLease => Request::AcquireLease(AcquireLease {
             token: token(&json["token"]),
             takeover: json["takeover"].as_bool().unwrap(),
@@ -136,6 +141,7 @@ fn reply(request_type: RequestType, json: &Value) -> Reply<'_> {
             expander_faults: int(&json["expander_faults"]),
             usb_tx_dropped: int(&json["usb_tx_dropped"]),
         }),
+        RequestType::SetLabel => Reply::SetLabel { label: json["label"].as_str().unwrap() },
         RequestType::AcquireLease => Reply::AcquireLease { ttl_ms: int(&json["ttl_ms"]) },
         RequestType::RenewLease => Reply::RenewLease,
         RequestType::ReleaseLease => Reply::ReleaseLease,
