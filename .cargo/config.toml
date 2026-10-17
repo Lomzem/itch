@@ -1,0 +1,8 @@
+# The Rig firmware needs the `esp` toolchain, e.g. `cargo +esp flash-firmware`.
+[alias]
+build-firmware = "build --locked -p itch-firmware --bin itch-firmware --features firmware --target xtensa-esp32s3-none-elf -Zbuild-std=core --profile firmware"
+clippy-firmware = "clippy --locked -p itch-firmware --bin itch-firmware --features firmware --target xtensa-esp32s3-none-elf -Zbuild-std=core --profile firmware -- -D warnings"
+flash-firmware = "run --locked -p itch-firmware --bin itch-firmware --features firmware --target xtensa-esp32s3-none-elf -Zbuild-std=core --profile firmware"
+
+[target.xtensa-esp32s3-none-elf]
+runner = "espflash flash --chip esp32s3"

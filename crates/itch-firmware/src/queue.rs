@@ -13,6 +13,14 @@ pub enum Transport {
     Usb,
 }
 
+/// Requests waiting for the `rig` task, in arrival order.
+#[cfg(feature = "firmware")]
+pub static REQUESTS: embassy_sync::channel::Channel<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    Queued,
+    DEPTH,
+> = embassy_sync::channel::Channel::new();
+
 /// A request waiting for the `rig` task.
 pub struct Queued {
     pub transport: Transport,

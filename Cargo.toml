@@ -11,3 +11,10 @@ publish = false
 itch-core = { path = "crates/itch-core" }
 log = "0.4.34"
 serde_json = "1"
+
+# The Rig firmware: `cargo +esp build-firmware`.
+[profile.firmware]
+inherits = "release"
+opt-level = "s"
+lto = "fat"
+codegen-units = 1

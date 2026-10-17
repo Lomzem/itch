@@ -148,3 +148,69 @@ fn ports(state: u16) -> [u8; 2] {
     }
     ports
 }
+
+#[cfg(feature = "firmware")]
+pub use esp32s3::{Parts, RealBoard, UsbRx, UsbTx, boot, force_reset_low};
+
+/// The ESP32-S3 side of the board: pins, peripherals and boot.
+#[cfg(feature = "firmware")]
+mod esp32s3 {
+    use esp_hal::delay::Delay;
+    use esp_hal::gpio::{Level, Output, OutputConfig};
+    use esp_hal::i2c::master::{Config, I2c, SoftwareTimeout};
+    use esp_hal::peripherals::{GPIO, GPIO6};
+    use esp_hal::time::Duration;
+    use esp_hal::timer::timg::TimerGroup;
+    use esp_hal::usb::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
+    use esp_hal::{Async, Blocking};
+
+    use super::RevA;
+
+    /// The expander's RESET is GPIO6, pulled low on the board.
+    const RESET_GPIO: u8 = 6;
+
+    /// The longest one I2C transaction may take before it fails. esp-hal
+    /// sets no timeout by default.
+    const I2C_TIMEOUT: Duration = Duration::from_millis(10);
+
+    pub type RealBoard = RevA<I2c<'static, Blocking>, Output<'static>, Output<'static>, Delay>;
+    pub type UsbRx = UsbSerialJtagRx<'static, Async>;
+    pub type UsbTx = UsbSerialJtagTx<'static, Async>;
+
+    /// What the firmware runs on once the chip is up.
+    pub struct Parts {
+        /// The board, with the expander still held in reset.
+        pub board: RealBoard,
+        /// USB Serial/JTAG, which keeps espflash's auto-reset on the same cable.
+        pub usb_rx: UsbRx,
+        pub usb_tx: UsbTx,
+    }
+
+    /// Boots the chip. The expander RESET is driven low before anything
+    /// else, so every contact stays open until the expander is brought up.
+    pub fn boot() -> Parts {
+        // A plain GPIO with no pad hold. This Output is GPIO6's only owner:
+        // nothing may use `GPIO6` from the peripherals below.
+        let reset = Output::new(unsafe { GPIO6::steal() }, Level::Low, OutputConfig::default());
+        let p = esp_hal::init(esp_hal::Config::default());
+        esp_rtos::start(TimerGroup::new(p.TIMG0).timer0, p.FROM_CPU_INTR0);
+
+        let config =
+            Config::default().with_software_timeout(SoftwareTimeout::Transaction(I2C_TIMEOUT));
+        let i2c = I2c::new(p.I2C0, config)
+            .expect("a valid I2C config")
+            .with_sda(p.GPIO5)
+            .with_scl(p.GPIO4);
+        let led = Output::new(p.GPIO15, Level::Low, OutputConfig::default());
+        let hardware_id =
+            esp_hal::efuse::base_mac_address().as_bytes().try_into().expect("a 6-byte MAC address");
+        let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
+        Parts { board: RevA::new(i2c, reset, led, Delay::new(), hardware_id), usb_rx, usb_tx }
+    }
+
+    /// Drives the expander RESET low straight through the GPIO registers,
+    /// for the panic path, which may run while its owner is mid-call.
+    pub fn force_reset_low() {
+        GPIO::regs().out_w1tc().write(|w| unsafe { w.bits(1 << RESET_GPIO) });
+    }
+}
