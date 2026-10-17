@@ -117,15 +117,16 @@ Every change sets an absolute state, so retrying a request is safe. The Rig keep
 
 ## Lease
 
-A Rig has one Lease, which lets one client change its Channels. It belongs to a token, not to a connection or a transport. The Rig sets its lifetime and reports it in `AcquireLease` (`ttl_ms`, 10 s), and the client keeps it alive with `RenewLease`.
+A Rig has one Lease, which lets one client change its Channels. It belongs to a token, not to a connection or a transport. The Rig sets its lifetime and reports it in `AcquireLease` (`ttl_ms`, 10 s), and the client keeps it alive with `RenewLease`. The Lease expires when `now >= last_renewal + 10000` ms; the Rig checks this when a request arrives. A free Rig is one with no Lease or an expired one.
 
-- **Token-bearing requests** are `WriteChannels`, `Clear`, `AcquireLease` and `RenewLease`. Token 0 means "no token", and such a request gets `LeaseRequired`.
-- A request with the token that holds the Lease proceeds and renews it.
-- A token-bearing request to a free Rig claims the Lease and proceeds.
-- A retried `AcquireLease` with the current token succeeds.
+- **Token-bearing requests** are `WriteChannels`, `Clear` and `RenewLease`. Token 0 means "no token", and such a request (or an `AcquireLease` with token 0) gets `LeaseRequired`. Otherwise:
+  - with the token that holds the Lease, the request proceeds and renews it;
+  - on a free Rig, the request claims the Lease and proceeds. The Holder is the request's `holder` if it carries one, otherwise "unknown" until the next `RenewLease`;
+  - while another client holds a live Lease, the reply is `LeaseLost`, with a `detail` naming the Holder. The Lease is not renewed.
+- `AcquireLease` is granted when the Rig is free or the token already holds the Lease, so a retried acquire succeeds. While another client holds a live Lease the reply is `LeaseHeld`, with a `detail` naming the Holder, unless `takeover` is set: then the request replaces the Holder at once.
 - `ReleaseLease` frees the Rig. A token that doesn't hold the Lease makes it a no-op success.
 - Reads (`Hello`, `GetChannels`, `GetStatus`) carry no token and neither need nor renew the Lease.
-- Releasing the Lease leaves the Channels as they are. Only a reboot Clears them.
+- Expiry, release and Takeover leave the Channels as they are. Only a reboot Clears them. So after a reboot, or after another client held the Lease and released it, the old token's next change reclaims the Rig without error.
 
 ## Versioning
 
