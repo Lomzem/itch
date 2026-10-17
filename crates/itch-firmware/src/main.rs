@@ -13,7 +13,7 @@ use itch_core::rig::{Handled, Rig, SETTLE_MS};
 use itch_core::wire::LogLevel;
 use itch_firmware::board::{self, RealBoard};
 use itch_firmware::queue::{self, Payload, Transport};
-use itch_firmware::{logger, usb};
+use itch_firmware::{logger, supervisor, usb};
 use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -25,12 +25,17 @@ static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 
 #[esp_hal::main]
 fn main() -> ! {
-    let board::Parts { mut board, usb_rx, usb_tx } = board::boot();
+    let board::Parts { mut board, watchdog, usb_rx, usb_tx } = board::boot();
     logger::init();
+    let last_panic = board.info().last_panic;
+    if !last_panic.is_empty() {
+        log::error!("the previous boot panicked at {last_panic}");
+    }
     EXECUTOR.init(Executor::new()).run(move |spawner| {
         if board.reinit().is_err() {
             log::error!("the expander didn't come up; holding it in reset");
         }
+        spawner.spawn(supervisor::supervisor(watchdog).unwrap());
         spawner.spawn(rig(board).unwrap());
         spawner.spawn(usb::usb_rx(usb_rx).unwrap());
         spawner.spawn(usb::usb_tx(usb_tx).unwrap());
@@ -50,6 +55,7 @@ async fn rig(mut board: RealBoard) {
             Either::First(()) => {
                 rig.tick(&mut board);
                 board.tick();
+                supervisor::check_in();
                 continue;
             }
             Either::Second(request) => request,
@@ -83,10 +89,12 @@ async fn send_reply(transport: Transport, reply: Payload) {
     }
 }
 
-/// Opens every contact, then resets the whole chip. Never a CPU-only
-/// reset, which would leave the expander running.
+/// Opens every contact, leaves where the panic happened for the next boot,
+/// then resets the whole chip. Never a CPU-only reset, which would leave
+/// the expander running.
 #[panic_handler]
-fn panic(_: &core::panic::PanicInfo) -> ! {
+fn panic(info: &core::panic::PanicInfo) -> ! {
     board::force_reset_low();
+    board::record_panic(info.location());
     esp_hal::system::software_reset()
 }

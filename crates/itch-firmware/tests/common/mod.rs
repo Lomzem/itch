@@ -215,6 +215,7 @@ impl Bench {
             Chip {
                 hardware_id: [0x02, 0x00, 0x00, 0xAC, 0xE0, 0x01],
                 reset_reason: 0x01,
+                last_panic: "",
                 now: || 0,
                 counters: Counters::default,
             },

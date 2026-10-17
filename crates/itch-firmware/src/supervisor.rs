@@ -107,3 +107,25 @@ impl<'a> Supervisor<'a> {
         if self.latch.tripped() { Check::Missed } else { Check::Fresh }
     }
 }
+
+/// Feeds the RTC watchdog while `rig` keeps checking in. After a miss it
+/// holds the expander in reset until the watchdog resets the chip.
+#[cfg(feature = "firmware")]
+#[embassy_executor::task]
+pub async fn supervisor(mut watchdog: esp_hal::rtc_cntl::Rwdt) {
+    use embassy_time::{Duration, Instant, Ticker};
+
+    /// How often the supervisor checks on `rig`.
+    const PERIOD: Duration = Duration::from_millis(50);
+
+    let now = || Instant::now().as_millis();
+    let mut supervisor = Supervisor::new(&TRIPPED, now());
+    let mut ticker = Ticker::every(PERIOD);
+    loop {
+        match supervisor.check(CHECK_INS.load(Ordering::Relaxed), now()) {
+            Check::Fresh => watchdog.feed(),
+            Check::Missed => crate::board::force_reset_low(),
+        }
+        ticker.next().await;
+    }
+}
