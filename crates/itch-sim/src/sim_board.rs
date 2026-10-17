@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Instant;
 
-use itch_core::board::{Board, BoardInfo, Counters};
+use itch_core::board::{Board, BoardInfo, Counters, HwFault};
 
 use crate::logs::DROPPED_LOGS;
 
@@ -15,10 +15,14 @@ pub static OVERSIZED_FRAMES: AtomicU32 = AtomicU32::new(0);
 pub struct SimBoard {
     info: BoardInfo,
     booted: Instant,
+    /// What the simulated expander drives, bit 0 = CH1.
+    outputs: u16,
+    /// The expander is unreachable, so every operation on it fails.
+    hardware_fault: bool,
 }
 
 impl SimBoard {
-    pub fn new() -> Self {
+    pub fn new(hardware_fault: bool) -> Self {
         Self {
             info: BoardInfo {
                 // A locally administered MAC, so it can't clash with a real Rig.
@@ -32,7 +36,15 @@ impl SimBoard {
                 last_panic: "",
             },
             booted: Instant::now(),
+            outputs: 0,
+            hardware_fault,
         }
+    }
+}
+
+impl SimBoard {
+    fn expander(&self) -> Result<(), HwFault> {
+        if self.hardware_fault { Err(HwFault) } else { Ok(()) }
     }
 }
 
@@ -41,7 +53,21 @@ impl Board for SimBoard {
         self.info
     }
 
-    fn write_outputs(&mut self, _state: u16) {}
+    fn write_outputs(&mut self, state: u16) -> Result<(), HwFault> {
+        self.expander()?;
+        self.outputs = state;
+        Ok(())
+    }
+
+    fn read_outputs(&mut self) -> Result<u16, HwFault> {
+        self.expander()?;
+        Ok(self.outputs)
+    }
+
+    fn reinit(&mut self) -> Result<(), HwFault> {
+        self.outputs = 0;
+        self.expander()
+    }
 
     fn now(&self) -> u64 {
         u64::try_from(self.booted.elapsed().as_millis()).unwrap_or(u64::MAX)

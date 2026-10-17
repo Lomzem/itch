@@ -16,10 +16,15 @@ use itch_core::rig::{Handled, Rig, SETTLE_MS};
 use logs::ConnectionLogs;
 use sim_board::{CRC_FAILURES, OVERSIZED_FRAMES, SimBoard};
 
-const USAGE: &str = "usage: itch-sim [--bind ADDR]
+const USAGE: &str = "usage: itch-sim [--bind ADDR] [--hardware-fault]
 
 Serves a simulated Rig over TCP, by default on 127.0.0.1 with a free port.
-Once listening it prints one line: `itch-sim listening on tcp://HOST:PORT`.";
+Once listening it prints one line: `itch-sim listening on tcp://HOST:PORT`.
+
+  --hardware-fault  simulate an unreachable Channel expander";
+
+/// How often the Rig does its idle work.
+const TICK: Duration = Duration::from_millis(50);
 
 /// The one simulated Rig, shared by every connection.
 struct Sim {
@@ -29,10 +34,12 @@ struct Sim {
 
 fn main() -> ExitCode {
     let mut bind = String::from("127.0.0.1:0");
-    let mut args = std::env::args().skip(1);
+    let mut hardware_fault = false;
+    let mut args = std::env::args().skip(1).peekable();
     while let Some(arg) = args.next() {
-        match (arg.as_str(), args.next()) {
+        match (arg.as_str(), args.next_if(|_| arg == "--bind")) {
             ("--bind", Some(addr)) => bind = addr,
+            ("--hardware-fault", None) => hardware_fault = true,
             _ => {
                 eprintln!("{USAGE}");
                 return ExitCode::from(2);
@@ -50,12 +57,26 @@ fn main() -> ExitCode {
     println!("itch-sim listening on tcp://{}", listener.local_addr().unwrap());
     logs::init();
 
-    let sim = Arc::new(Mutex::new(Sim { rig: Rig::new(), board: SimBoard::new() }));
+    let sim = Sim { rig: Rig::new(), board: SimBoard::new(hardware_fault) };
+    let sim = Arc::new(Mutex::new(sim));
+    thread::spawn({
+        let sim = Arc::clone(&sim);
+        move || tick(&sim)
+    });
     for stream in listener.incoming().flatten() {
         let sim = Arc::clone(&sim);
         thread::spawn(move || serve(stream, &sim));
     }
     ExitCode::SUCCESS
+}
+
+/// Runs the Rig's idle tick forever.
+fn tick(sim: &Mutex<Sim>) {
+    loop {
+        thread::sleep(TICK);
+        let Sim { rig, board } = &mut *sim.lock().unwrap();
+        rig.tick(board);
+    }
 }
 
 /// Serves one connection until it closes: its replies, and its Log Events

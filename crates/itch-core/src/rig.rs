@@ -35,6 +35,9 @@ pub struct Rig {
     malformed_frames: u32,
     /// Times the expander was found faulty and re-initialised.
     expander_faults: u32,
+    /// The expander didn't come back up, so it is held in reset with every
+    /// Channel off.
+    held: bool,
 }
 
 impl Rig {
@@ -89,6 +92,18 @@ impl Rig {
         }
     }
 
+    /// The idle tick, every ~50 ms. Re-initialises the expander if it no
+    /// longer drives the commanded Channels, and retries one held in reset.
+    pub fn tick<B: Board>(&mut self, board: &mut B) {
+        if !self.held {
+            if board.read_outputs() == Ok(self.channels) {
+                return;
+            }
+            self.count_fault();
+        }
+        let _ = self.recover(board, self.channels);
+    }
+
     fn drop_malformed(&mut self) -> Handled {
         self.malformed_frames = self.malformed_frames.wrapping_add(1);
         Handled::NoReply
@@ -116,7 +131,9 @@ impl Rig {
             }
             // The transport applies the level; see `Handled::SetLogLevel`.
             Request::SetLogLevel { .. } => Reply::SetLogLevel,
-            Request::GetChannels => Reply::GetChannels { state: self.channels },
+            Request::GetChannels => {
+                Reply::GetChannels { state: if self.held { 0 } else { self.channels } }
+            }
             Request::GetStatus => {
                 let info = board.info();
                 let counters = board.counters();
@@ -136,11 +153,11 @@ impl Rig {
             Request::WriteChannels(write) => {
                 self.lease.hold(write.token)?;
                 let state = self.channels & !write.mask | write.values & write.mask;
-                Reply::WriteChannels { state: self.write(board, state) }
+                Reply::WriteChannels { state: self.write(board, state)? }
             }
             Request::Clear { token } => {
                 self.lease.hold(token)?;
-                Reply::Clear { state: self.write(board, 0) }
+                Reply::Clear { state: self.write(board, 0)? }
             }
             Request::AcquireLease(acquire) => {
                 self.lease.acquire(acquire.token)?;
@@ -157,9 +174,35 @@ impl Rig {
         })
     }
 
-    fn write<B: Board>(&mut self, board: &mut B, state: u16) -> u16 {
-        board.write_outputs(state);
+    /// Drives the Channels to `state` and makes it the commanded state. A
+    /// failed write re-initialises the expander and tries again.
+    fn write<B: Board>(&mut self, board: &mut B, state: u16) -> Result<u16, ErrorCode> {
+        if self.held {
+            return Err(ErrorCode::HardwareFault);
+        }
+        if board.write_outputs(state).is_err() {
+            self.count_fault();
+            self.recover(board, state)?;
+        }
         self.channels = state;
-        state
+        Ok(state)
+    }
+
+    fn count_fault(&mut self) {
+        self.expander_faults = self.expander_faults.wrapping_add(1);
+        log::warn!("the expander faulted; re-initialising it");
+    }
+
+    /// Re-initialises the expander and drives `state`. If that fails, the
+    /// expander is held in reset until a later tick brings it back.
+    fn recover<B: Board>(&mut self, board: &mut B, state: u16) -> Result<(), ErrorCode> {
+        let recovered = board.reinit().and_then(|()| board.write_outputs(state)).is_ok();
+        if recovered && self.held {
+            log::info!("the expander is back; Channels restored");
+        } else if !recovered && !self.held {
+            log::error!("the expander didn't come back; holding every Channel off");
+        }
+        self.held = !recovered;
+        if recovered { Ok(()) } else { Err(ErrorCode::HardwareFault) }
     }
 }

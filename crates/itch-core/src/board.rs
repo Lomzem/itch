@@ -5,7 +5,15 @@ pub trait Board {
     fn info(&self) -> BoardInfo;
 
     /// Drives the Channels to `state`, bit 0 = CH1.
-    fn write_outputs(&mut self, state: u16);
+    fn write_outputs(&mut self, state: u16) -> Result<(), HwFault>;
+
+    /// Reads back the Channels the expander drives, bit 0 = CH1.
+    fn read_outputs(&mut self) -> Result<u16, HwFault>;
+
+    /// Pulses the expander's RESET and brings it back up with every Channel
+    /// off. If it doesn't come up, it is held in reset, so every Channel
+    /// stays off.
+    fn reinit(&mut self) -> Result<(), HwFault>;
 
     /// Milliseconds since boot, monotonic.
     fn now(&self) -> u64;
@@ -13,6 +21,10 @@ pub trait Board {
     /// A snapshot of the counters other tasks keep.
     fn counters(&self) -> Counters;
 }
+
+/// The Channel expander didn't answer or didn't take its configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HwFault;
 
 /// Facts fixed for the life of a boot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

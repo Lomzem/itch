@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::SETTLE_MS;
 use itch_core::wire::{
-    Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request, Response, StatusReply,
-    WriteChannels,
+    ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request, Response,
+    StatusReply, WriteChannels,
 };
 
 #[test]
@@ -109,6 +109,35 @@ fn status_counts_bad_frames_from_every_connection() {
     );
 }
 
+#[test]
+fn a_hardware_fault_holds_every_channel_off_and_refuses_writes() {
+    let sim = Sim::start_with(&["--hardware-fault"]);
+    let mut stream = sim.connect();
+    let write = WriteChannels { token: 1, mask: 0x8001, values: 0x8001 };
+    let reply = exchange(&mut stream, 1, Request::WriteChannels(write));
+    assert!(matches!(reply, Response::Err { error: ErrorCode::HardwareFault, .. }), "{reply:?}");
+    let reply = exchange(&mut stream, 2, Request::GetChannels);
+    assert_eq!(reply, Response::Ok(Reply::GetChannels { state: 0 }));
+}
+
+#[test]
+fn a_hardware_fault_is_found_by_the_idle_tick() {
+    let sim = Sim::start_with(&["--hardware-fault"]);
+    let mut stream = sim.connect();
+    let started = Instant::now();
+    loop {
+        let Response::Ok(Reply::GetStatus(status)) = exchange(&mut stream, 1, Request::GetStatus)
+        else {
+            panic!("not a GetStatus reply");
+        };
+        if status.expander_faults == 1 {
+            return;
+        }
+        assert!(started.elapsed() < Duration::from_secs(2), "no tick found the fault");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 struct Sim {
     child: Child,
     url: String,
@@ -116,8 +145,15 @@ struct Sim {
 
 impl Sim {
     fn start() -> Self {
-        let mut child =
-            Command::new(env!("CARGO_BIN_EXE_itch-sim")).stdout(Stdio::piped()).spawn().unwrap();
+        Self::start_with(&[])
+    }
+
+    fn start_with(args: &[&str]) -> Self {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_itch-sim"))
+            .args(args)
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
         let mut line = String::new();
         BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
         let url = line.trim().strip_prefix("itch-sim listening on ").unwrap().to_owned();
