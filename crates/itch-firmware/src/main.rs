@@ -27,10 +27,11 @@ fn main() -> ! {
     let board::Parts { mut board, usb_rx, usb_tx } = board::boot();
     logger::init();
     EXECUTOR.init(Executor::new()).run(move |spawner| {
+        let rig_logic = Rig::new(&mut board);
         if board.reinit().is_err() {
             log::error!("the expander didn't come up; holding it in reset");
         }
-        spawner.spawn(rig(board).unwrap());
+        spawner.spawn(rig(rig_logic, board).unwrap());
         spawner.spawn(usb::usb_rx(usb_rx).unwrap());
         spawner.spawn(usb::usb_tx(usb_tx).unwrap());
     })
@@ -39,8 +40,7 @@ fn main() -> ! {
 /// The sole owner of the Rig, the board and I2C. Answers queued requests
 /// in order, each to the transport it came from, and runs the idle tick.
 #[embassy_executor::task]
-async fn rig(mut board: RealBoard) {
-    let mut rig = Rig::new();
+async fn rig(mut rig: Rig, mut board: RealBoard) {
     let mut ticker = Ticker::every(TICK);
     let mut reply = [0; MAX_PAYLOAD];
     loop {

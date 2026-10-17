@@ -1,4 +1,4 @@
-use crate::board::Board;
+use crate::board::{Board, StorageFault};
 use crate::frame::MAX_PAYLOAD;
 use crate::label::Label;
 use crate::lease::{self, Lease};
@@ -26,9 +26,10 @@ pub enum Handled {
 
 /// The Rig's protocol logic. It does no I/O: the transport feeds it decoded
 /// payloads and sends back what it writes.
-#[derive(Default)]
 pub struct Rig {
     lease: Lease,
+    /// The label `Hello` reports.
+    label: Label,
     /// The commanded Channel state, bit 0 = CH1.
     channels: u16,
     /// Payloads dropped for being under 5 bytes.
@@ -38,8 +39,19 @@ pub struct Rig {
 }
 
 impl Rig {
-    pub fn new() -> Self {
-        Self::default()
+    /// Boots the Rig on `board`, loading the saved label.
+    pub fn new<B: Board>(board: &mut B) -> Self {
+        let label = board
+            .load_label()
+            .filter(|label| !label.as_str().is_empty())
+            .unwrap_or_else(|| Label::default_for(board.info().hardware_id));
+        Self {
+            lease: Lease::default(),
+            label,
+            channels: 0,
+            malformed_frames: 0,
+            expander_faults: 0,
+        }
     }
 
     /// Answers one request payload, writing the reply payload into `reply`.
@@ -59,13 +71,12 @@ impl Rig {
         let decoded = RequestType::from_u8(request_type)
             .ok_or(DecodeError::UnknownType)
             .and_then(|kind| Request::decode(kind, body));
-        let label = Label::default_for(board.info().hardware_id);
         let log_level = match decoded {
             Ok(Request::SetLogLevel { level }) => Some(level),
             _ => None,
         };
         let result = match decoded {
-            Ok(request) => self.apply(request, board, &label),
+            Ok(request) => self.apply(request, board),
             Err(error) => {
                 let error = match error {
                     DecodeError::Malformed => ErrorCode::Malformed,
@@ -102,12 +113,7 @@ impl Rig {
         Handled::NoReply
     }
 
-    fn apply<'a, B: Board>(
-        &'a mut self,
-        request: Request,
-        board: &mut B,
-        label: &'a Label,
-    ) -> Result<Reply<'a>, ErrorCode> {
+    fn apply<B: Board>(&mut self, request: Request, board: &mut B) -> Result<Reply<'_>, ErrorCode> {
         let now = board.now();
         self.lease.expire(now);
         Ok(match request {
@@ -121,7 +127,7 @@ impl Rig {
                     channel_count: CHANNEL_COUNT,
                     board_revision: info.board_revision,
                     hardware_id: info.hardware_id,
-                    label: label.as_str(),
+                    label: self.label.as_str(),
                 })
             }
             // The transport applies the level; see `Handled::SetLogLevel`.
@@ -152,6 +158,11 @@ impl Rig {
                 self.lease.hold(token, None, now)?;
                 Reply::Clear { state: self.write(board, 0) }
             }
+            Request::SetLabel(set) => {
+                self.lease.hold(set.token, None, now)?;
+                self.set_label(board, set.label)?;
+                Reply::SetLabel { label: self.label.as_str() }
+            }
             Request::AcquireLease(acquire) => {
                 self.lease.acquire(acquire.token, acquire.takeover, acquire.holder, now)?;
                 Reply::AcquireLease { ttl_ms: lease::TTL_MS }
@@ -165,6 +176,19 @@ impl Rig {
                 Reply::ReleaseLease
             }
         })
+    }
+
+    /// Saves `label` and reports it from now on. Empty, or the default by
+    /// name, restores the default, which is saved as empty.
+    fn set_label<B: Board>(&mut self, board: &mut B, label: &str) -> Result<(), ErrorCode> {
+        let default = Label::default_for(board.info().hardware_id);
+        let custom = if label == default.as_str() { "" } else { label };
+        board.save_label(custom).map_err(|StorageFault| ErrorCode::StorageFault)?;
+        self.label = match custom {
+            "" => default,
+            custom => Label::new(custom).expect("decoding caps labels at 64 bytes"),
+        };
+        Ok(())
     }
 
     fn write<B: Board>(&mut self, board: &mut B, state: u16) -> u16 {

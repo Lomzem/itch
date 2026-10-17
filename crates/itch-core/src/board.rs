@@ -1,6 +1,8 @@
 //! The Rig's view of its hardware. Adapters: the real board (firmware),
 //! `SimBoard` (itch-sim) and `FakeBoard` (tests).
 
+use crate::label::Label;
+
 pub trait Board {
     fn info(&self) -> BoardInfo;
 
@@ -12,7 +14,19 @@ pub trait Board {
 
     /// A snapshot of the counters other tasks keep.
     fn counters(&self) -> Counters;
+
+    /// The label last saved, read once at boot. `None` for a missing or
+    /// corrupt record; it and an empty label mean the default.
+    fn load_label(&mut self) -> Option<Label>;
+
+    /// Persists `label` before returning, so it survives a reboot. Empty
+    /// means "report the default"; the default itself is never saved.
+    fn save_label(&mut self, label: &str) -> Result<(), StorageFault>;
 }
+
+/// The label couldn't be saved. Answered with `StorageFault`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StorageFault;
 
 /// Facts fixed for the life of a boot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

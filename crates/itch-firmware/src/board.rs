@@ -4,7 +4,8 @@
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::OutputPin;
 use embedded_hal::i2c::I2c;
-use itch_core::board::{Board, BoardInfo, Counters};
+use itch_core::board::{Board, BoardInfo, Counters, StorageFault};
+use itch_core::label::Label;
 
 /// The MCP23017's I2C address: A0-A2 are tied to GND.
 const EXPANDER: u8 = 0x20;
@@ -69,6 +70,9 @@ pub struct RevA<I2C, RESET, LED, DELAY> {
     faulted: bool,
     /// Where a fault blink is: lit or not.
     blink: bool,
+    /// The saved label. An in-RAM stand-in until ticket 15 adds the
+    /// flash-backed settings record, so a label lasts until the next reset.
+    label: Option<Label>,
 }
 
 impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> RevA<I2C, RESET, LED, DELAY> {
@@ -83,7 +87,18 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> RevA<I2C, RESET
             reset_reason: chip.reset_reason,
             last_panic: "",
         };
-        Self { i2c, reset, led, delay, info, chip, outputs: 0, faulted: false, blink: false }
+        Self {
+            i2c,
+            reset,
+            led,
+            delay,
+            info,
+            chip,
+            outputs: 0,
+            faulted: false,
+            blink: false,
+            label: None,
+        }
     }
 
     /// Pulses RESET and brings the expander back up with every Channel off.
@@ -155,6 +170,15 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs> Board
 
     fn counters(&self) -> Counters {
         (self.chip.counters)()
+    }
+
+    fn load_label(&mut self) -> Option<Label> {
+        self.label
+    }
+
+    fn save_label(&mut self, label: &str) -> Result<(), StorageFault> {
+        self.label = Label::new(label);
+        Ok(())
     }
 }
 

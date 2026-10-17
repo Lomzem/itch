@@ -72,8 +72,9 @@ fn malformed_requests_get_the_error_the_vectors_give() {
 fn set_log_level_hands_the_level_to_the_calling_connection() {
     let mut reply = [0; MAX_PAYLOAD];
     let request = request(9, Request::SetLogLevel { level: LogLevel::Info });
+    let mut board = FakeBoard::new();
     let Handled::SetLogLevel { len, level } =
-        Rig::new().handle(&request, &mut FakeBoard::new(), &mut reply)
+        Rig::new(&mut board).handle(&request, &mut board, &mut reply)
     else {
         panic!("not a SetLogLevel");
     };
@@ -98,7 +99,7 @@ fn request(request_id: u32, request: Request) -> Vec<u8> {
 
 fn handle(board: &mut FakeBoard, request: &[u8]) -> Option<Vec<u8>> {
     let mut reply = [0; MAX_PAYLOAD];
-    match Rig::new().handle(request, board, &mut reply) {
+    match Rig::new(board).handle(request, board, &mut reply) {
         Handled::NoReply => None,
         Handled::Reply { len, .. } | Handled::SetLogLevel { len, .. } => {
             Some(reply[..len].to_vec())
