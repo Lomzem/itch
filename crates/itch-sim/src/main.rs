@@ -8,9 +8,10 @@ use std::net::{TcpListener, TcpStream};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use itch_core::frame::{FrameDecoder, FrameError, MAX_FRAME, MAX_PAYLOAD, encode_frame};
-use itch_core::rig::{Handled, Rig};
+use itch_core::rig::{Handled, Rig, SETTLE_MS};
 use logs::ConnectionLogs;
 use sim_board::SimBoard;
 
@@ -114,7 +115,13 @@ fn answer(
             };
             let len = match handled {
                 Handled::NoReply => continue,
-                Handled::Reply { len, .. } => len,
+                Handled::Reply { len, settle } => {
+                    if settle {
+                        // Outside the lock, so other connections aren't held up.
+                        thread::sleep(Duration::from_millis(SETTLE_MS));
+                    }
+                    len
+                }
                 Handled::SetLogLevel { len, level } => {
                     logs.set_level(level);
                     len

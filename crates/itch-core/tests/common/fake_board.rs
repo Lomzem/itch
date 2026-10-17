@@ -3,6 +3,8 @@ use itch_core::board::{Board, BoardInfo};
 /// A Board for host tests. Its facts match the `hello-ok` vector.
 pub struct FakeBoard {
     pub info: BoardInfo,
+    /// Every output write, oldest first. Bit 0 = CH1.
+    pub writes: Vec<u16>,
 }
 
 impl FakeBoard {
@@ -15,6 +17,7 @@ impl FakeBoard {
                 features: 0,
                 board_revision: "A",
             },
+            writes: Vec::new(),
         }
     }
 }
@@ -22,5 +25,9 @@ impl FakeBoard {
 impl Board for FakeBoard {
     fn info(&self) -> BoardInfo {
         self.info
+    }
+
+    fn write_outputs(&mut self, state: u16) {
+        self.writes.push(state);
     }
 }

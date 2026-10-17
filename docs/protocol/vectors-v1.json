@@ -41,6 +41,145 @@
       "payload": "81 78 56 34 12 07 0a 71 75 65 75 65 20 66 75 6c 6c"
     },
     {
+      "name": "get-channels-request",
+      "message": {
+        "kind": "request",
+        "type": "GetChannels",
+        "request_id": 305419896
+      },
+      "payload": "02 78 56 34 12"
+    },
+    {
+      "name": "get-channels-ok",
+      "message": {
+        "kind": "response",
+        "type": "GetChannels",
+        "request_id": 305419896,
+        "status": "Ok",
+        "state": 32769
+      },
+      "payload": "82 78 56 34 12 00 01 80"
+    },
+    {
+      "name": "write-channels-request",
+      "message": {
+        "kind": "request",
+        "type": "WriteChannels",
+        "request_id": 305419896,
+        "token": "0x0123456789abcdef",
+        "mask": 5,
+        "values": 1
+      },
+      "payload": "03 78 56 34 12 ef cd ab 89 67 45 23 01 05 00 01 00"
+    },
+    {
+      "name": "write-channels-ok",
+      "message": {
+        "kind": "response",
+        "type": "WriteChannels",
+        "request_id": 305419896,
+        "status": "Ok",
+        "state": 32769
+      },
+      "payload": "83 78 56 34 12 00 01 80"
+    },
+    {
+      "name": "write-channels-lease-required",
+      "message": {
+        "kind": "response",
+        "type": "WriteChannels",
+        "request_id": 305419896,
+        "status": "LeaseRequired",
+        "detail": ""
+      },
+      "payload": "83 78 56 34 12 04 00"
+    },
+    {
+      "name": "clear-request",
+      "message": {
+        "kind": "request",
+        "type": "Clear",
+        "request_id": 305419896,
+        "token": "0x0123456789abcdef"
+      },
+      "payload": "04 78 56 34 12 ef cd ab 89 67 45 23 01"
+    },
+    {
+      "name": "clear-ok",
+      "message": {
+        "kind": "response",
+        "type": "Clear",
+        "request_id": 305419896,
+        "status": "Ok",
+        "state": 0
+      },
+      "payload": "84 78 56 34 12 00 00 00"
+    },
+    {
+      "name": "acquire-lease-request",
+      "message": {
+        "kind": "request",
+        "type": "AcquireLease",
+        "request_id": 305419896,
+        "token": "0x0123456789abcdef",
+        "takeover": false,
+        "holder": "qa@bench-pc acme_test.py"
+      },
+      "payload": "08 78 56 34 12 ef cd ab 89 67 45 23 01 00 18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79"
+    },
+    {
+      "name": "acquire-lease-ok",
+      "message": {
+        "kind": "response",
+        "type": "AcquireLease",
+        "request_id": 305419896,
+        "status": "Ok",
+        "ttl_ms": 10000
+      },
+      "payload": "88 78 56 34 12 00 10 27 00 00"
+    },
+    {
+      "name": "renew-lease-request",
+      "message": {
+        "kind": "request",
+        "type": "RenewLease",
+        "request_id": 305419896,
+        "token": "0x0123456789abcdef",
+        "holder": "qa@bench-pc acme_test.py"
+      },
+      "payload": "09 78 56 34 12 ef cd ab 89 67 45 23 01 18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79"
+    },
+    {
+      "name": "renew-lease-ok",
+      "message": {
+        "kind": "response",
+        "type": "RenewLease",
+        "request_id": 305419896,
+        "status": "Ok"
+      },
+      "payload": "89 78 56 34 12 00"
+    },
+    {
+      "name": "release-lease-request",
+      "message": {
+        "kind": "request",
+        "type": "ReleaseLease",
+        "request_id": 305419896,
+        "token": "0x0123456789abcdef"
+      },
+      "payload": "0a 78 56 34 12 ef cd ab 89 67 45 23 01"
+    },
+    {
+      "name": "release-lease-ok",
+      "message": {
+        "kind": "response",
+        "type": "ReleaseLease",
+        "request_id": 305419896,
+        "status": "Ok"
+      },
+      "payload": "8a 78 56 34 12 00"
+    },
+    {
       "name": "set-log-level-request",
       "message": {
         "kind": "request",

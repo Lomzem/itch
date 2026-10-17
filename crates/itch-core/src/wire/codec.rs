@@ -30,6 +30,10 @@ impl<'a> Reader<'a> {
         self.array().map(u32::from_le_bytes)
     }
 
+    pub(crate) fn u64(&mut self) -> Result<u64, DecodeError> {
+        self.array().map(u64::from_le_bytes)
+    }
+
     pub(crate) fn bool(&mut self) -> Result<bool, DecodeError> {
         match self.u8()? {
             0 => Ok(false),
@@ -85,6 +89,10 @@ impl<'a> Writer<'a> {
     }
 
     pub(crate) fn u32(&mut self, value: u32) {
+        self.bytes(&value.to_le_bytes());
+    }
+
+    pub(crate) fn u64(&mut self, value: u64) {
         self.bytes(&value.to_le_bytes());
     }
 

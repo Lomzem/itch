@@ -24,4 +24,6 @@ impl Board for SimBoard {
     fn info(&self) -> BoardInfo {
         self.info
     }
+
+    fn write_outputs(&mut self, _state: u16) {}
 }

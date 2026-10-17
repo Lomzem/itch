@@ -1,10 +1,13 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
-use itch_core::wire::{Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request, Response};
+use itch_core::rig::SETTLE_MS;
+use itch_core::wire::{
+    Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request, Response, WriteChannels,
+};
 
 #[test]
 fn answers_hello_over_tcp() {
@@ -59,6 +62,17 @@ fn sends_no_logs_by_default() {
     hello(&mut quiet, 2);
 }
 
+#[test]
+fn a_write_replies_after_the_contacts_settle() {
+    let sim = Sim::start();
+    let mut stream = sim.connect();
+    let write = WriteChannels { token: 1, mask: 0x8001, values: 0x8001 };
+    let started = Instant::now();
+    let reply = exchange(&mut stream, 3, Request::WriteChannels(write));
+    assert!(started.elapsed() >= Duration::from_millis(SETTLE_MS));
+    assert_eq!(reply, Response::Ok(Reply::WriteChannels { state: 0x8001 }));
+}
+
 struct Sim {
     child: Child,
     url: String,
@@ -89,21 +103,24 @@ impl Drop for Sim {
 }
 
 fn hello(stream: &mut TcpStream, request_id: u32) -> HelloReply<'static> {
-    stream.write_all(&request(request_id, Request::Hello)).unwrap();
-    match receive(stream) {
-        Message::Response { request_id: id, response: Response::Ok(Reply::Hello(hello)) }
-            if id == request_id =>
-        {
-            hello
-        }
+    match exchange(stream, request_id, Request::Hello) {
+        Response::Ok(Reply::Hello(hello)) => hello,
         other => panic!("not a Hello reply: {other:?}"),
     }
 }
 
-fn set_log_level(stream: &mut TcpStream, level: LogLevel) {
-    stream.write_all(&request(1, Request::SetLogLevel { level })).unwrap();
+/// Sends `request` and returns the response to it.
+fn exchange(stream: &mut TcpStream, request_id: u32, request: Request) -> Response<'static> {
+    stream.write_all(&self::request(request_id, request)).unwrap();
     match receive(stream) {
-        Message::Response { response: Response::Ok(Reply::SetLogLevel), .. } => {}
+        Message::Response { request_id: id, response } if id == request_id => response,
+        other => panic!("not a response to {request_id}: {other:?}"),
+    }
+}
+
+fn set_log_level(stream: &mut TcpStream, level: LogLevel) {
+    match exchange(stream, 1, Request::SetLogLevel { level }) {
+        Response::Ok(Reply::SetLogLevel) => {}
         other => panic!("not a SetLogLevel reply: {other:?}"),
     }
 }

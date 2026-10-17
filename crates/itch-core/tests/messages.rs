@@ -3,8 +3,8 @@ mod common;
 use common::{cases, hex, vectors};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::wire::{
-    ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, PROTOCOL, Reply, Request,
-    RequestType, Response,
+    AcquireLease, ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, PROTOCOL, RenewLease,
+    Reply, Request, RequestType, Response, WriteChannels,
 };
 use serde_json::Value;
 
@@ -59,14 +59,37 @@ fn message(json: &Value) -> Message<'_> {
 fn request_type(name: &str) -> RequestType {
     match name {
         "Hello" => RequestType::Hello,
+        "GetChannels" => RequestType::GetChannels,
+        "WriteChannels" => RequestType::WriteChannels,
+        "Clear" => RequestType::Clear,
+        "AcquireLease" => RequestType::AcquireLease,
+        "RenewLease" => RequestType::RenewLease,
+        "ReleaseLease" => RequestType::ReleaseLease,
         "SetLogLevel" => RequestType::SetLogLevel,
         _ => panic!("unknown request type {name}"),
     }
 }
 
-fn request(request_type: RequestType, json: &Value) -> Request {
+fn request(request_type: RequestType, json: &Value) -> Request<'_> {
     match request_type {
         RequestType::Hello => Request::Hello,
+        RequestType::GetChannels => Request::GetChannels,
+        RequestType::WriteChannels => Request::WriteChannels(WriteChannels {
+            token: token(&json["token"]),
+            mask: int(&json["mask"]),
+            values: int(&json["values"]),
+        }),
+        RequestType::Clear => Request::Clear { token: token(&json["token"]) },
+        RequestType::AcquireLease => Request::AcquireLease(AcquireLease {
+            token: token(&json["token"]),
+            takeover: json["takeover"].as_bool().unwrap(),
+            holder: json["holder"].as_str().unwrap(),
+        }),
+        RequestType::RenewLease => Request::RenewLease(RenewLease {
+            token: token(&json["token"]),
+            holder: json["holder"].as_str().unwrap(),
+        }),
+        RequestType::ReleaseLease => Request::ReleaseLease { token: token(&json["token"]) },
         RequestType::SetLogLevel => Request::SetLogLevel { level: log_level(&json["level"]) },
     }
 }
@@ -83,6 +106,12 @@ fn reply(request_type: RequestType, json: &Value) -> Reply<'_> {
             hardware_id: hex(json["hardware_id"].as_str().unwrap()).try_into().unwrap(),
             label: json["label"].as_str().unwrap(),
         }),
+        RequestType::GetChannels => Reply::GetChannels { state: int(&json["state"]) },
+        RequestType::WriteChannels => Reply::WriteChannels { state: int(&json["state"]) },
+        RequestType::Clear => Reply::Clear { state: int(&json["state"]) },
+        RequestType::AcquireLease => Reply::AcquireLease { ttl_ms: int(&json["ttl_ms"]) },
+        RequestType::RenewLease => Reply::RenewLease,
+        RequestType::ReleaseLease => Reply::ReleaseLease,
         RequestType::SetLogLevel => Reply::SetLogLevel,
     }
 }
@@ -123,4 +152,9 @@ fn error_code(name: &str) -> ErrorCode {
 
 fn int<T: TryFrom<u64>>(json: &Value) -> T {
     T::try_from(json.as_u64().unwrap()).ok().unwrap()
+}
+
+/// A `u64` token, written as a `0x` hex string.
+fn token(json: &Value) -> u64 {
+    u64::from_str_radix(json.as_str().unwrap().strip_prefix("0x").unwrap(), 16).unwrap()
 }
