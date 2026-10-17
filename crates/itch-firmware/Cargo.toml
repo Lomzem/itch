@@ -1,0 +1,10 @@
+[package]
+name = "itch-firmware"
+description = "The itch Rig firmware for the ESP32-S3: board support and the USB transport."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+embedded-hal = "1.0.0"
+itch-core.workspace = true
