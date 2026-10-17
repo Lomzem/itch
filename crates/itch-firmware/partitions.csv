@@ -1,0 +1,7 @@
+# The Rig's 8 MB flash. Settings follow the app's whole partition, so a
+# merged image saved with --skip-padding ends before them.
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+factory,    app,  factory, 0x10000,  0x3f0000,
+settings,   data, 0x06,    0x400000, 0x10000,

@@ -10,6 +10,7 @@ pub mod crash;
 #[cfg(feature = "firmware")]
 pub mod logger;
 pub mod queue;
+pub mod settings;
 pub mod supervisor;
 #[cfg(feature = "wifi")]
 pub mod tcp;
