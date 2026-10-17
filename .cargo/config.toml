@@ -5,4 +5,6 @@ clippy-firmware = "clippy --locked -p itch-firmware --bin itch-firmware --featur
 flash-firmware = "run --locked -p itch-firmware --bin itch-firmware --features firmware --target xtensa-esp32s3-none-elf -Zbuild-std=core --profile firmware"
 
 [target.xtensa-esp32s3-none-elf]
-runner = "espflash flash --chip esp32s3"
+# Run from the workspace root: espflash resolves the partition table from
+# the current directory.
+runner = "espflash flash --chip esp32s3 --flash-size 8mb --partition-table crates/itch-firmware/partitions.csv"

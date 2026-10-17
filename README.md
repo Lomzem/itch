@@ -25,6 +25,18 @@ cargo +esp flash-firmware    # flashes a Rig over its USB-C port
 cargo +esp clippy-firmware
 ```
 
+Run these from the workspace root. Flashing uses the partition table in `crates/itch-firmware/partitions.csv`, which keeps the settings partition (the Rig's label) after the app, so a reflash leaves the label alone. Don't erase the whole chip: that loses the label.
+
+To hand out a single image instead, save a merged one without padding. Padding would fill the flash to its end and overwrite the settings:
+
+```sh
+cargo +esp build-firmware
+espflash save-image --chip esp32s3 --flash-size 8mb \
+  --partition-table crates/itch-firmware/partitions.csv --merge --skip-padding \
+  target/xtensa-esp32s3-none-elf/firmware/itch-firmware itch-firmware.bin
+espflash write-bin 0x0 itch-firmware.bin    # flashes it; the label survives
+```
+
 ## Releases
 
 Each [release](https://github.com/Lomzem/itch/releases) attaches:

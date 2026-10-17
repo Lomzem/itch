@@ -7,12 +7,16 @@ use std::rc::Rc;
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{ErrorType as PinErrorType, OutputPin};
 use embedded_hal::i2c::{self, ErrorKind, I2c, NoAcknowledgeSource, Operation};
+use embedded_storage::nor_flash::{
+    ErrorType as FlashErrorType, NorFlash, NorFlashErrorKind, ReadNorFlash,
+};
 use itch_core::board::{Board, Counters};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, Rig};
-use itch_core::wire::{Message, Request, WriteChannels};
+use itch_core::wire::{Message, Reply, Request, Response, SetLabel, WriteChannels};
 use itch_firmware::board::{Chip, RevA};
-use itch_firmware::supervisor::{DEADLINE_MS, Latch, ResetLine, Supervisor};
+use itch_firmware::settings::PARTITION;
+use itch_firmware::supervisor::{self, DEADLINE_MS, Latch, ResetLine, Supervisor};
 
 const ADDRESS: u8 = 0x20;
 pub const IODIRA: u8 = 0x00;
@@ -187,7 +191,110 @@ impl DelayNs for NoDelay {
     fn delay_ns(&mut self, _ns: u32) {}
 }
 
-pub type FakeRevA = RevA<Bus, ResetLine<'static, ResetPin>, Led, NoDelay>;
+const SECTOR: usize = 4096;
+
+/// A simulated NOR flash holding the settings partition, which keeps its
+/// contents through a power cycle. Erasing sets a 4 KiB sector to `0xFF`
+/// and writing can only clear bits, as on the ESP32-S3's flash.
+pub struct Flash {
+    bytes: Vec<u8>,
+    /// Fails every erase and write.
+    pub broken: bool,
+    /// The supervisor's check-in count at each sector erase and each write,
+    /// oldest first.
+    pub writes: Vec<u32>,
+}
+
+impl Flash {
+    /// A partition never written, as on a new module.
+    pub fn erased() -> Rc<RefCell<Self>> {
+        let len = (PARTITION.end - PARTITION.start) as usize;
+        Rc::new(RefCell::new(Self { bytes: vec![0xFF; len], broken: false, writes: vec![] }))
+    }
+
+    /// Overwrites the whole partition with noise.
+    pub fn scramble(&mut self) {
+        let mut seed = 0x2545_F491_u32;
+        for byte in &mut self.bytes {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            *byte = seed as u8;
+        }
+    }
+
+    /// The partition offsets of `len` bytes at the physical address `from`.
+    fn span(
+        &self,
+        from: u32,
+        len: usize,
+        align: usize,
+    ) -> Result<std::ops::Range<usize>, NorFlashErrorKind> {
+        let start =
+            from.checked_sub(PARTITION.start).ok_or(NorFlashErrorKind::OutOfBounds)? as usize;
+        if !start.is_multiple_of(align) || !len.is_multiple_of(align) {
+            return Err(NorFlashErrorKind::NotAligned);
+        }
+        if start + len > self.bytes.len() {
+            return Err(NorFlashErrorKind::OutOfBounds);
+        }
+        Ok(start..start + len)
+    }
+
+    fn change(&mut self) -> Result<(), NorFlashErrorKind> {
+        self.writes.push(supervisor::CHECK_INS.load(std::sync::atomic::Ordering::Relaxed));
+        if self.broken { Err(NorFlashErrorKind::Other) } else { Ok(()) }
+    }
+}
+
+pub struct FlashPort(Rc<RefCell<Flash>>);
+
+impl FlashErrorType for FlashPort {
+    type Error = NorFlashErrorKind;
+}
+
+impl ReadNorFlash for FlashPort {
+    const READ_SIZE: usize = 4;
+
+    fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), NorFlashErrorKind> {
+        let flash = self.0.borrow();
+        let span = flash.span(offset, bytes.len(), Self::READ_SIZE)?;
+        bytes.copy_from_slice(&flash.bytes[span]);
+        Ok(())
+    }
+
+    fn capacity(&self) -> usize {
+        PARTITION.end as usize
+    }
+}
+
+impl NorFlash for FlashPort {
+    const WRITE_SIZE: usize = 4;
+    const ERASE_SIZE: usize = SECTOR;
+
+    fn erase(&mut self, from: u32, to: u32) -> Result<(), NorFlashErrorKind> {
+        let mut flash = self.0.borrow_mut();
+        let span = flash.span(from, to.saturating_sub(from) as usize, SECTOR)?;
+        // The chip erases one sector at a time, each one a stall.
+        for _ in span.clone().step_by(SECTOR) {
+            flash.change()?;
+        }
+        flash.bytes[span].fill(0xFF);
+        Ok(())
+    }
+
+    fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), NorFlashErrorKind> {
+        let mut flash = self.0.borrow_mut();
+        let span = flash.span(offset, bytes.len(), Self::WRITE_SIZE)?;
+        flash.change()?;
+        for (old, new) in flash.bytes[span].iter_mut().zip(bytes) {
+            *old &= new;
+        }
+        Ok(())
+    }
+}
+
+pub type FakeRevA = RevA<Bus, ResetLine<'static, ResetPin>, Led, NoDelay, FlashPort>;
 
 const TOKEN: u64 = 0x0123_4567_89AB_CDEF;
 
@@ -195,6 +302,7 @@ const TOKEN: u64 = 0x0123_4567_89AB_CDEF;
 /// a simulated expander and pins.
 pub struct Bench {
     pub expander: Rc<RefCell<Expander>>,
+    pub flash: Rc<RefCell<Flash>>,
     led: Rc<Cell<bool>>,
     pub board: FakeRevA,
     pub rig: Rig,
@@ -204,6 +312,11 @@ pub struct Bench {
 impl Bench {
     /// Powers up with RESET held low, as the firmware leaves it at boot.
     pub fn power_on() -> Self {
+        Self::power_on_with(Flash::erased())
+    }
+
+    /// Powers up on `flash`, as left by an earlier boot.
+    pub fn power_on_with(flash: Rc<RefCell<Flash>>) -> Self {
         let expander = Rc::new(RefCell::new(Expander::power_on()));
         let led = Rc::new(Cell::new(false));
         let latch = Box::leak(Box::new(Latch::new()));
@@ -212,6 +325,7 @@ impl Bench {
             ResetLine::new(ResetPin(Rc::clone(&expander)), latch),
             Led(Rc::clone(&led)),
             NoDelay,
+            FlashPort(Rc::clone(&flash)),
             Chip {
                 hardware_id: [0x02, 0x00, 0x00, 0xAC, 0xE0, 0x01],
                 reset_reason: 0x01,
@@ -221,12 +335,19 @@ impl Bench {
             },
         );
         let rig = Rig::new(&mut board);
-        Self { expander, led, board, rig, latch }
+        Self { expander, flash, led, board, rig, latch }
     }
 
     /// Powers up and brings the expander up, as the firmware does at boot.
     pub fn boot() -> Self {
         let mut bench = Self::power_on();
+        bench.board.reinit().expect("the expander comes up");
+        bench
+    }
+
+    /// Cuts the power and boots again: only the flash is kept.
+    pub fn power_cycle(self) -> Self {
+        let mut bench = Self::power_on_with(self.flash);
         bench.board.reinit().expect("the expander comes up");
         bench
     }
@@ -246,6 +367,42 @@ impl Bench {
         let mut reply = [0; MAX_PAYLOAD];
         let handled = self.rig.handle(&payload[..len], &mut self.board, &mut reply);
         assert!(matches!(handled, Handled::Reply { .. }), "no reply: {handled:?}");
+    }
+
+    /// Renames the Rig through the Rig logic: `Ok` with the label it now
+    /// reports, or the error code's name.
+    pub fn set_label(&mut self, label: &str) -> Result<String, String> {
+        let request = Request::SetLabel(SetLabel { token: TOKEN, label });
+        self.request(request, |reply| match reply {
+            Reply::SetLabel { label } => label.to_owned(),
+            reply => panic!("not a SetLabel reply: {reply:?}"),
+        })
+    }
+
+    /// The label `Hello` reports.
+    pub fn label(&mut self) -> String {
+        self.request(Request::Hello, |reply| match reply {
+            Reply::Hello(hello) => hello.label.to_owned(),
+            reply => panic!("not a Hello reply: {reply:?}"),
+        })
+        .expect("Hello succeeds")
+    }
+
+    fn request<T>(&mut self, request: Request, read: impl FnOnce(Reply) -> T) -> Result<T, String> {
+        let mut payload = [0; MAX_PAYLOAD];
+        let len = Message::Request { request_id: 1, request }.encode(&mut payload);
+        let mut reply = [0; MAX_PAYLOAD];
+        let len = match self.rig.handle(&payload[..len], &mut self.board, &mut reply) {
+            Handled::Reply { len, .. } => len,
+            handled => panic!("no reply: {handled:?}"),
+        };
+        match Message::decode(&reply[..len]).expect("a valid reply") {
+            Message::Response { response: Response::Ok(reply), .. } => Ok(read(reply)),
+            Message::Response { response: Response::Err { error, .. }, .. } => {
+                Err(format!("{error:?}"))
+            }
+            message => panic!("not a response: {message:?}"),
+        }
     }
 
     pub fn driven(&self) -> (u8, u8) {
