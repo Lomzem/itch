@@ -257,7 +257,7 @@ mod esp32s3 {
     use super::{Chip, RevA};
     use crate::crash::{self, RECORD_LEN, Record};
     use crate::supervisor::{self, ResetLine};
-    use crate::{logger, usb};
+    use crate::{logger, queue, usb};
 
     /// The expander's RESET is GPIO6, pulled low on the board.
     const RESET_GPIO: u8 = 6;
@@ -364,8 +364,8 @@ mod esp32s3 {
     fn counters() -> Counters {
         let load = |counter: &AtomicU32| counter.load(Ordering::Relaxed);
         Counters {
-            crc_failures: load(&usb::CRC_FAILURES),
-            oversized_frames: load(&usb::OVERSIZED_FRAMES),
+            crc_failures: load(&queue::CRC_FAILURES),
+            oversized_frames: load(&queue::OVERSIZED_FRAMES),
             dropped_logs: load(&logger::DROPPED_LOGS),
             usb_tx_dropped: load(&usb::TX_DROPPED),
         }
