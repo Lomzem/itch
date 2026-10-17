@@ -9,6 +9,7 @@ Each message lists its request body and its ok result body. The header (`type`, 
 | `0x03` | [`WriteChannels`](#writechannels) |
 | `0x04` | [`Clear`](#clear) |
 | `0x05` | [`GetStatus`](#getstatus) |
+| `0x06` | [`SetLabel`](#setlabel) |
 | `0x07` | [`SetLogLevel`](#setloglevel) |
 | `0x08` | [`AcquireLease`](#acquirelease) |
 | `0x09` | [`RenewLease`](#renewlease) |
@@ -208,6 +209,60 @@ f8 ce 38 00 00 00 00 00
 04 00 00 00
 05 00 00 00
 06 00 00 00
+```
+
+## SetLabel
+
+`0x06`. Renames the Rig. It needs the Lease. The Rig saves the label before it replies, so the reply means the label survives a reboot. An empty label, or the default label by name, restores the default `itch-` plus the last three Hardware ID bytes in uppercase hex, such as `itch-C02718`. The default is never saved. A failed save gets `StorageFault` and keeps the old label.
+
+Request body:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `token` | `u64` | The Lease token |
+| `label` | `text` | At most 64 bytes. Empty = restore the default |
+
+Result body:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `label` | `text` | The label the Rig now reports, as in `Hello` |
+
+Request to rename the Rig `bench3`:
+
+```hex
+06 78 56 34 12
+ef cd ab 89 67 45 23 01
+06 62 65 6e 63 68 33
+```
+
+Reply:
+
+```hex
+86 78 56 34 12 00
+06 62 65 6e 63 68 33
+```
+
+Request to restore the default:
+
+```hex
+06 78 56 34 12
+ef cd ab 89 67 45 23 01
+00
+```
+
+Reply on the Rig with Hardware ID `60:55:F9:C0:27:18`:
+
+```hex
+86 78 56 34 12 00
+0b 69 74 63 68 2d 43 30 32 37 31 38
+```
+
+Refused with `StorageFault`:
+
+```hex
+86 78 56 34 12 09
+00
 ```
 
 ## SetLogLevel
