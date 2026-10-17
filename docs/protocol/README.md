@@ -172,4 +172,4 @@ Every case has a `name`, unique within its section.
 - `"Malformed"`: the payload breaks its byte table (too short, bytes left over, a bad `bool` or enum, invalid UTF-8, over-long text), or is an ok reply to an unknown request type.
 - `"UnknownRequest"`: a request whose `type` names no request.
 
-A client rejects every case. A Rig, given a request case (`type` below `0x80`), answers with `error` as its `status` and the payload's `request_id` echoed, except that a payload under 5 bytes gets no reply and is counted in `malformed_frames`.
+A client rejects every case. A Rig, given a request case (`type` below `0x40`), answers with `error` as its `status` and the payload's `request_id` echoed, except that a payload under 5 bytes gets no reply and is counted in `malformed_frames`.

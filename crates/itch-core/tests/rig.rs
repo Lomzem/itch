@@ -50,8 +50,8 @@ fn malformed_requests_get_the_error_the_vectors_give() {
     for case in cases(&vectors(), "malformed") {
         let name = &case["name"];
         let payload = hex(case["payload"].as_str().unwrap());
-        if payload[0] & 0x80 != 0 {
-            continue; // A reply, which only clients decode.
+        if payload[0] >= 0x40 {
+            continue; // An Event or a reply, which only clients decode.
         }
         let reply = handle(&mut FakeBoard::new(), &payload);
         if payload.len() < 5 {

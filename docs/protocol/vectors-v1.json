@@ -255,7 +255,7 @@
         "type": "Log",
         "level": 2,
         "dropped": 3,
-        "text": "label set to caf\u00e9"
+        "text": "label set to café"
       },
       "payload": "40 02 03 00 00 00 6c 61 62 65 6c 20 73 65 74 20 74 6f 20 63 61 66 c3 a9"
     }
@@ -442,6 +442,26 @@
     {
       "name": "error-reply-without-detail",
       "payload": "81 78 56 34 12 07",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-log-level-above-debug",
+      "payload": "07 78 56 34 12 05",
+      "error": "Malformed"
+    },
+    {
+      "name": "log-event-level-off",
+      "payload": "40 00 00 00 00 00 61",
+      "error": "Malformed"
+    },
+    {
+      "name": "log-event-short",
+      "payload": "40 02 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "log-event-text-invalid-utf8",
+      "payload": "40 02 00 00 00 00 c3 28",
       "error": "Malformed"
     }
   ]
