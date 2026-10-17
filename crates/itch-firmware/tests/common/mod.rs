@@ -71,7 +71,9 @@ impl Expander {
 
     /// The pins driven high, as `(GPA, GPB)`: outputs whose latch is set.
     pub fn driven(&self) -> (u8, u8) {
-        let pins = |port: usize| self.registers[0x14 + port] & !self.registers[port];
+        let pins = |port: usize| {
+            self.registers[usize::from(OLATA) + port] & !self.registers[usize::from(IODIRA) + port]
+        };
         (pins(0), pins(1))
     }
 

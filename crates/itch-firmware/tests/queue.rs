@@ -1,7 +1,7 @@
 use itch_firmware::queue::busy;
 
 #[test]
-fn a_full_queue_answers_busy_echoing_the_request_id() {
+fn busy_echoes_the_request_type_and_id() {
     // GetChannels, request_id 0x12345678.
     let request = [0x02, 0x78, 0x56, 0x34, 0x12];
     let reply = busy(&request).expect("a Busy reply");
