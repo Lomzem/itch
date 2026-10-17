@@ -6,11 +6,14 @@ mod channels;
 mod codec;
 mod hello;
 mod lease;
+mod log;
 
 pub use channels::WriteChannels;
 use codec::{Reader, Writer};
 pub use hello::{FEATURE_WIFI, HelloReply};
 pub use lease::{AcquireLease, RenewLease};
+pub(crate) use log::encode_header as encode_log_header;
+pub use log::{LogEvent, LogLevel, MAX_LOG_TEXT};
 
 /// Bumped on any message change. Clients require an exact match.
 pub const PROTOCOL: u16 = 1;
@@ -32,6 +35,7 @@ pub enum RequestType {
     GetChannels = 0x02,
     WriteChannels = 0x03,
     Clear = 0x04,
+    SetLogLevel = 0x07,
     AcquireLease = 0x08,
     RenewLease = 0x09,
     ReleaseLease = 0x0A,
@@ -45,6 +49,7 @@ impl RequestType {
             0x02 => GetChannels,
             0x03 => WriteChannels,
             0x04 => Clear,
+            0x07 => SetLogLevel,
             0x08 => AcquireLease,
             0x09 => RenewLease,
             0x0A => ReleaseLease,
@@ -100,6 +105,7 @@ pub enum DecodeError {
 pub enum Message<'a> {
     Request { request_id: u32, request: Request<'a> },
     Response { request_id: u32, response: Response<'a> },
+    Event(Event<'a>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +114,7 @@ pub enum Request<'a> {
     GetChannels,
     WriteChannels(WriteChannels),
     Clear { token: u64 },
+    SetLogLevel { level: LogLevel },
     AcquireLease(AcquireLease<'a>),
     RenewLease(RenewLease<'a>),
     ReleaseLease { token: u64 },
@@ -143,8 +150,15 @@ pub enum Reply<'a> {
     AcquireLease {
         ttl_ms: u32,
     },
+    SetLogLevel,
     RenewLease,
     ReleaseLease,
+}
+
+/// An unsolicited message from the Rig. Clients ignore Event types they don't know.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Event<'a> {
+    Log(LogEvent<'a>),
 }
 
 impl<'a> Message<'a> {
@@ -172,6 +186,7 @@ impl<'a> Message<'a> {
                 w.u8(*error as u8);
                 w.text(detail);
             }
+            Message::Event(Event::Log(log)) => log.encode(&mut w),
         }
         w.len()
     }
@@ -181,7 +196,10 @@ impl<'a> Message<'a> {
         let message_type = r.u8()?;
         if message_type & RESPONSE_BIT == 0 {
             if message_type >= FIRST_EVENT_TYPE {
-                return Err(DecodeError::UnknownType);
+                if message_type != log::LOG_EVENT_TYPE {
+                    return Err(DecodeError::UnknownType);
+                }
+                return Ok(Message::Event(Event::Log(LogEvent::decode(&mut r)?)));
             }
             let request_id = r.u32()?;
             let request_type =
@@ -215,6 +233,7 @@ impl<'a> Request<'a> {
             Request::GetChannels => RequestType::GetChannels,
             Request::WriteChannels(_) => RequestType::WriteChannels,
             Request::Clear { .. } => RequestType::Clear,
+            Request::SetLogLevel { .. } => RequestType::SetLogLevel,
             Request::AcquireLease(_) => RequestType::AcquireLease,
             Request::RenewLease(_) => RequestType::RenewLease,
             Request::ReleaseLease { .. } => RequestType::ReleaseLease,
@@ -229,6 +248,7 @@ impl<'a> Request<'a> {
             RequestType::GetChannels => Request::GetChannels,
             RequestType::WriteChannels => Request::WriteChannels(WriteChannels::decode(&mut r)?),
             RequestType::Clear => Request::Clear { token: r.u64()? },
+            RequestType::SetLogLevel => Request::SetLogLevel { level: LogLevel::decode(&mut r)? },
             RequestType::AcquireLease => Request::AcquireLease(AcquireLease::decode(&mut r)?),
             RequestType::RenewLease => Request::RenewLease(RenewLease::decode(&mut r)?),
             RequestType::ReleaseLease => Request::ReleaseLease { token: r.u64()? },
@@ -244,6 +264,7 @@ impl<'a> Request<'a> {
             Request::Clear { token } | Request::ReleaseLease { token } => w.u64(*token),
             Request::AcquireLease(acquire) => acquire.encode(w),
             Request::RenewLease(renew) => renew.encode(w),
+            Request::SetLogLevel { level } => w.u8(*level as u8),
         }
     }
 }
@@ -255,6 +276,7 @@ impl<'a> Reply<'a> {
             Reply::GetChannels { .. } => RequestType::GetChannels,
             Reply::WriteChannels { .. } => RequestType::WriteChannels,
             Reply::Clear { .. } => RequestType::Clear,
+            Reply::SetLogLevel => RequestType::SetLogLevel,
             Reply::AcquireLease { .. } => RequestType::AcquireLease,
             Reply::RenewLease => RequestType::RenewLease,
             Reply::ReleaseLease => RequestType::ReleaseLease,
@@ -267,6 +289,7 @@ impl<'a> Reply<'a> {
             RequestType::GetChannels => Reply::GetChannels { state: r.u16()? },
             RequestType::WriteChannels => Reply::WriteChannels { state: r.u16()? },
             RequestType::Clear => Reply::Clear { state: r.u16()? },
+            RequestType::SetLogLevel => Reply::SetLogLevel,
             RequestType::AcquireLease => Reply::AcquireLease { ttl_ms: r.u32()? },
             RequestType::RenewLease => Reply::RenewLease,
             RequestType::ReleaseLease => Reply::ReleaseLease,
@@ -280,7 +303,7 @@ impl<'a> Reply<'a> {
             | Reply::WriteChannels { state }
             | Reply::Clear { state } => w.u16(*state),
             Reply::AcquireLease { ttl_ms } => w.u32(*ttl_ms),
-            Reply::RenewLease | Reply::ReleaseLease => {}
+            Reply::SetLogLevel | Reply::RenewLease | Reply::ReleaseLease => {}
         }
     }
 }

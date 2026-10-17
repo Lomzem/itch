@@ -3,7 +3,7 @@ use crate::frame::MAX_PAYLOAD;
 use crate::label::Label;
 use crate::lease::{self, Lease};
 use crate::wire::{
-    CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, Message, PROTOCOL, Reply, Request,
+    CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, LogLevel, Message, PROTOCOL, Reply, Request,
     RequestType, Response,
 };
 
@@ -19,6 +19,9 @@ pub enum Handled {
     /// Send the first `len` bytes of the reply buffer, after waiting
     /// [`SETTLE_MS`] if `settle` is set.
     Reply { len: usize, settle: bool },
+    /// Set the calling connection's log level to `level`, then send the
+    /// first `len` bytes of the reply buffer.
+    SetLogLevel { len: usize, level: LogLevel },
 }
 
 /// The Rig's protocol logic. It does no I/O: the transport feeds it decoded
@@ -53,10 +56,22 @@ impl Rig {
             .ok_or(DecodeError::UnknownType)
             .and_then(|kind| Request::decode(kind, body));
         let label = Label::default_for(board.info().hardware_id);
+        let log_level = match decoded {
+            Ok(Request::SetLogLevel { level }) => Some(level),
+            _ => None,
+        };
         let result = match decoded {
             Ok(request) => self.apply(request, board, &label),
-            Err(DecodeError::Malformed) => Err(ErrorCode::Malformed),
-            Err(DecodeError::UnknownType) => Err(ErrorCode::UnknownRequest),
+            Err(error) => {
+                let error = match error {
+                    DecodeError::Malformed => ErrorCode::Malformed,
+                    DecodeError::UnknownType => ErrorCode::UnknownRequest,
+                };
+                log::warn!(
+                    "answered request {request_id} (type {request_type:#04x}) with {error:?}"
+                );
+                Err(error)
+            }
         };
         let settle = matches!(result, Ok(Reply::WriteChannels { .. } | Reply::Clear { .. }));
         let response = match result {
@@ -64,7 +79,10 @@ impl Rig {
             Err(error) => Response::Err { request_type, error, detail: "" },
         };
         let len = Message::Response { request_id, response }.encode(reply);
-        Handled::Reply { len, settle }
+        match log_level {
+            Some(level) => Handled::SetLogLevel { len, level },
+            None => Handled::Reply { len, settle },
+        }
     }
 
     fn apply<'a, B: Board>(
@@ -87,6 +105,8 @@ impl Rig {
                     label: label.as_str(),
                 })
             }
+            // The transport applies the level; see `Handled::SetLogLevel`.
+            Request::SetLogLevel { .. } => Reply::SetLogLevel,
             Request::GetChannels => Reply::GetChannels { state: self.channels },
             Request::WriteChannels(write) => {
                 self.lease.hold(write.token)?;

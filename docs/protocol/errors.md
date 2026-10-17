@@ -27,7 +27,7 @@ A response's `status` is 0 on success, otherwise one of these codes. `detail` is
 | 3 | info |
 | 4 | debug |
 
-The level is per connection and defaults to off. Over USB it lasts until the Rig reboots or the level changes.
+The level is per connection and defaults to off. Over USB it lasts until the Rig reboots or the level changes. [`SetLogLevel`](messages.md#setloglevel) sets it, and a connection receives [`Log`](messages.md#log) Events at its level and below. The Rig has no trace level; its trace output goes out as debug.
 
 ## Counters
 
@@ -38,6 +38,6 @@ The level is per connection and defaults to off. Over USB it lasts until the Rig
 | `crc_failures` | Frames dropped for a bad CRC, truncated COBS or a wrong `length` |
 | `oversized_frames` | Frames dropped for a payload over 1024 bytes |
 | `malformed_frames` | Payloads dropped for being under 5 bytes |
-| `dropped_logs` | Log Events dropped because a transport's queue was full |
+| `dropped_logs` | Log Events dropped because a connection's queue was full |
 | `expander_faults` | Times the Channel expander was found faulty and re-initialised |
 | `usb_tx_dropped` | Frames the USB transport cut short after its write timeout |

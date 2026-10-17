@@ -3,8 +3,8 @@ mod common;
 use common::{cases, hex, vectors};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::wire::{
-    AcquireLease, ErrorCode, HelloReply, Message, PROTOCOL, RenewLease, Reply, Request,
-    RequestType, Response, WriteChannels,
+    AcquireLease, ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, PROTOCOL, RenewLease,
+    Reply, Request, RequestType, Response, WriteChannels,
 };
 use serde_json::Value;
 
@@ -34,6 +34,9 @@ fn the_vectors_are_for_this_protocol() {
 /// Builds the message a vector describes. See "Conformance vectors" in
 /// `docs/protocol/README.md` for the JSON shape.
 fn message(json: &Value) -> Message<'_> {
+    if json["kind"] == "event" {
+        return Message::Event(event(json));
+    }
     let request_id = u32::try_from(json["request_id"].as_u64().unwrap()).unwrap();
     let request_type = request_type(json["type"].as_str().unwrap());
     match (json["kind"].as_str().unwrap(), json["status"].as_str()) {
@@ -62,6 +65,7 @@ fn request_type(name: &str) -> RequestType {
         "AcquireLease" => RequestType::AcquireLease,
         "RenewLease" => RequestType::RenewLease,
         "ReleaseLease" => RequestType::ReleaseLease,
+        "SetLogLevel" => RequestType::SetLogLevel,
         _ => panic!("unknown request type {name}"),
     }
 }
@@ -86,6 +90,7 @@ fn request(request_type: RequestType, json: &Value) -> Request<'_> {
             holder: json["holder"].as_str().unwrap(),
         }),
         RequestType::ReleaseLease => Request::ReleaseLease { token: token(&json["token"]) },
+        RequestType::SetLogLevel => Request::SetLogLevel { level: log_level(&json["level"]) },
     }
 }
 
@@ -107,7 +112,23 @@ fn reply(request_type: RequestType, json: &Value) -> Reply<'_> {
         RequestType::AcquireLease => Reply::AcquireLease { ttl_ms: int(&json["ttl_ms"]) },
         RequestType::RenewLease => Reply::RenewLease,
         RequestType::ReleaseLease => Reply::ReleaseLease,
+        RequestType::SetLogLevel => Reply::SetLogLevel,
     }
+}
+
+fn event(json: &Value) -> Event<'_> {
+    match json["type"].as_str().unwrap() {
+        "Log" => Event::Log(LogEvent {
+            level: log_level(&json["level"]),
+            dropped: int(&json["dropped"]),
+            text: json["text"].as_str().unwrap(),
+        }),
+        name => panic!("unknown event type {name}"),
+    }
+}
+
+fn log_level(json: &Value) -> LogLevel {
+    LogLevel::from_u8(int(json)).unwrap()
 }
 
 fn error_code(name: &str) -> ErrorCode {

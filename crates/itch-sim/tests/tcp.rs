@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::SETTLE_MS;
-use itch_core::wire::{HelloReply, Message, Reply, Request, Response, WriteChannels};
+use itch_core::wire::{
+    Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request, Response, WriteChannels,
+};
 
 #[test]
 fn answers_hello_over_tcp() {
@@ -24,6 +26,40 @@ fn serves_several_connections_at_once() {
     let mut other = sim.connect();
     hello(&mut other, 1);
     hello(&mut idle, 2);
+}
+
+#[test]
+fn sends_logs_to_a_connection_that_opted_in() {
+    let sim = Sim::start();
+    let mut watcher = sim.connect();
+    set_log_level(&mut watcher, LogLevel::Info);
+    let mut other = sim.connect();
+    hello(&mut other, 1);
+    let log = next_log(&mut watcher);
+    assert_eq!(log.level, LogLevel::Info);
+    assert!(log.text.contains("connected"), "{}", log.text);
+}
+
+#[test]
+fn logs_errors() {
+    let sim = Sim::start();
+    let mut watcher = sim.connect();
+    set_log_level(&mut watcher, LogLevel::Warn);
+    let mut other = sim.connect();
+    other.write_all(&frame(&[0x3F, 1, 0, 0, 0])).unwrap();
+    let log = next_log(&mut watcher);
+    assert_eq!(log.level, LogLevel::Warn);
+    assert!(log.text.contains("UnknownRequest"), "{}", log.text);
+}
+
+#[test]
+fn sends_no_logs_by_default() {
+    let sim = Sim::start();
+    let mut quiet = sim.connect();
+    let mut other = sim.connect();
+    hello(&mut other, 1);
+    // Any queued Log Event would arrive before this reply.
+    hello(&mut quiet, 2);
 }
 
 #[test]
@@ -75,22 +111,47 @@ fn hello(stream: &mut TcpStream, request_id: u32) -> HelloReply<'static> {
 
 /// Sends `request` and returns the response to it.
 fn exchange(stream: &mut TcpStream, request_id: u32, request: Request) -> Response<'static> {
-    let mut payload = [0; MAX_PAYLOAD];
-    let len = Message::Request { request_id, request }.encode(&mut payload);
-    let mut frame = [0; MAX_FRAME];
-    let len = encode_frame(&payload[..len], &mut frame);
-    stream.write_all(&frame[..len]).unwrap();
-
-    let mut decoder = FrameDecoder::new();
-    let reply = loop {
-        let mut byte = [0];
-        stream.read_exact(&mut byte).unwrap();
-        if let Some(Ok(reply)) = decoder.push(byte[0]) {
-            break reply.to_vec().leak();
-        }
-    };
-    match Message::decode(reply) {
-        Ok(Message::Response { request_id: id, response }) if id == request_id => response,
+    stream.write_all(&self::request(request_id, request)).unwrap();
+    match receive(stream) {
+        Message::Response { request_id: id, response } if id == request_id => response,
         other => panic!("not a response to {request_id}: {other:?}"),
     }
+}
+
+fn set_log_level(stream: &mut TcpStream, level: LogLevel) {
+    match exchange(stream, 1, Request::SetLogLevel { level }) {
+        Response::Ok(Reply::SetLogLevel) => {}
+        other => panic!("not a SetLogLevel reply: {other:?}"),
+    }
+}
+
+fn next_log(stream: &mut TcpStream) -> LogEvent<'static> {
+    match receive(stream) {
+        Message::Event(Event::Log(log)) => log,
+        other => panic!("not a Log Event: {other:?}"),
+    }
+}
+
+fn request(request_id: u32, request: Request) -> Vec<u8> {
+    let mut payload = [0; MAX_PAYLOAD];
+    let len = Message::Request { request_id, request }.encode(&mut payload);
+    frame(&payload[..len])
+}
+
+fn frame(payload: &[u8]) -> Vec<u8> {
+    let mut frame = [0; MAX_FRAME];
+    let len = encode_frame(payload, &mut frame);
+    frame[..len].to_vec()
+}
+
+fn receive(stream: &mut TcpStream) -> Message<'static> {
+    let mut decoder = FrameDecoder::new();
+    let payload = loop {
+        let mut byte = [0];
+        stream.read_exact(&mut byte).unwrap();
+        if let Some(Ok(payload)) = decoder.push(byte[0]) {
+            break payload.to_vec().leak();
+        }
+    };
+    Message::decode(payload).unwrap()
 }
