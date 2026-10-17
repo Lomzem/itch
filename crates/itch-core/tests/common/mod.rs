@@ -22,7 +22,12 @@ pub struct TestRig {
 
 impl TestRig {
     pub fn new() -> Self {
-        Self { rig: Rig::new(), board: FakeBoard::new(), settled: false }
+        Self::on(FakeBoard::new())
+    }
+
+    /// Boots a Rig on `board`.
+    pub fn on(mut board: FakeBoard) -> Self {
+        Self { rig: Rig::new(&mut board), board, settled: false }
     }
 
     /// Runs one idle tick.

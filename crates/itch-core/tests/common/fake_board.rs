@@ -1,4 +1,5 @@
-use itch_core::board::{Board, BoardInfo, Counters, HwFault};
+use itch_core::board::{Board, BoardInfo, Counters, HwFault, StorageFault};
+use itch_core::label::Label;
 
 /// A Board for host tests. Its facts match the `hello-ok` vector.
 pub struct FakeBoard {
@@ -16,6 +17,12 @@ pub struct FakeBoard {
     /// The clock in milliseconds, moved by hand.
     pub now: u64,
     pub counters: Counters,
+    /// The label in storage, loaded at boot. `None` = no record.
+    pub stored: Option<String>,
+    /// Every saved label, oldest first.
+    pub saved: Vec<String>,
+    /// Makes every save fail.
+    pub storage_fault: bool,
 }
 
 impl FakeBoard {
@@ -37,6 +44,9 @@ impl FakeBoard {
             unreachable: false,
             now: 0,
             counters: Counters::default(),
+            stored: None,
+            saved: Vec::new(),
+            storage_fault: false,
         }
     }
 
@@ -74,5 +84,18 @@ impl Board for FakeBoard {
 
     fn counters(&self) -> Counters {
         self.counters
+    }
+
+    fn load_label(&mut self) -> Option<Label> {
+        Label::new(self.stored.as_deref()?)
+    }
+
+    fn save_label(&mut self, label: &str) -> Result<(), StorageFault> {
+        if self.storage_fault {
+            return Err(StorageFault);
+        }
+        self.stored = Some(label.into());
+        self.saved.push(label.into());
+        Ok(())
     }
 }

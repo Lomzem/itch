@@ -1,7 +1,8 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
-use itch_core::board::{Board, BoardInfo, Counters, HwFault};
+use itch_core::board::{Board, BoardInfo, Counters, HwFault, StorageFault};
+use itch_core::label::Label;
 
 use crate::logs::DROPPED_LOGS;
 
@@ -21,10 +22,14 @@ pub struct SimBoard {
     outputs: u16,
     /// The expander is unreachable, so every operation on it fails.
     hardware_fault: bool,
+    /// The saved label, for this run only.
+    label: Option<Label>,
+    /// Makes every label save fail.
+    storage_fault: bool,
 }
 
 impl SimBoard {
-    pub fn new(clock_rate: u32, hardware_fault: bool) -> Self {
+    pub fn new(clock_rate: u32, hardware_fault: bool, storage_fault: bool) -> Self {
         Self {
             info: BoardInfo {
                 // A locally administered MAC, so it can't clash with a real Rig.
@@ -41,6 +46,8 @@ impl SimBoard {
             clock_rate,
             outputs: 0,
             hardware_fault,
+            label: None,
+            storage_fault,
         }
     }
 }
@@ -84,5 +91,17 @@ impl Board for SimBoard {
             dropped_logs: DROPPED_LOGS.load(Ordering::Relaxed),
             usb_tx_dropped: 0,
         }
+    }
+
+    fn load_label(&mut self) -> Option<Label> {
+        self.label
+    }
+
+    fn save_label(&mut self, label: &str) -> Result<(), StorageFault> {
+        if self.storage_fault {
+            return Err(StorageFault);
+        }
+        self.label = Label::new(label);
+        Ok(())
     }
 }

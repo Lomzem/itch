@@ -119,7 +119,7 @@ Every change sets an absolute state, so retrying a request is safe. The Rig keep
 
 A Rig has one Lease, which lets one client change its Channels. It belongs to a token, not to a connection or a transport. The Rig sets its lifetime and reports it in `AcquireLease` (`ttl_ms`, 10 s), and the client keeps it alive with `RenewLease`. The Lease expires when `now >= last_renewal + 10000` ms; the Rig checks this when a request arrives. A free Rig is one with no Lease or an expired one.
 
-- **Token-bearing requests** are `WriteChannels`, `Clear` and `RenewLease`. Token 0 means "no token", and such a request (or an `AcquireLease` with token 0) gets `LeaseRequired`. Otherwise:
+- **Token-bearing requests** are `WriteChannels`, `Clear`, `SetLabel` and `RenewLease`. Token 0 means "no token", and such a request (or an `AcquireLease` with token 0) gets `LeaseRequired`. Otherwise:
   - with the token that holds the Lease, the request proceeds and renews it;
   - on a free Rig, the request claims the Lease and proceeds. The Holder is the request's `holder` if it carries one, otherwise "unknown" until the next `RenewLease`;
   - while another client holds a live Lease, the reply is `LeaseLost`, with a `detail` naming the Holder. The Lease is not renewed.

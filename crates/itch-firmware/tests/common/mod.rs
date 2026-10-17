@@ -196,7 +196,7 @@ impl Bench {
     pub fn power_on() -> Self {
         let expander = Rc::new(RefCell::new(Expander::power_on()));
         let led = Rc::new(Cell::new(false));
-        let board = RevA::new(
+        let mut board = RevA::new(
             Bus(Rc::clone(&expander)),
             ResetPin(Rc::clone(&expander)),
             Led(Rc::clone(&led)),
@@ -208,7 +208,8 @@ impl Bench {
                 counters: Counters::default,
             },
         );
-        Self { expander, led, board, rig: Rig::new() }
+        let rig = Rig::new(&mut board);
+        Self { expander, led, board, rig }
     }
 
     /// Powers up and brings the expander up, as the firmware does at boot.
