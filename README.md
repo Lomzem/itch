@@ -7,6 +7,7 @@ Firmware, simulator and protocol spec for itch Rigs. Terms are defined in [GLOSS
 - `crates/itch-firmware`: the Rig firmware for the ESP32-S3 Rev A board, built on `itch-core`.
 - `crates/itch-sim`: a simulated Rig serving the protocol over TCP.
 - `docs/protocol/`: the protocol spec and its conformance vectors.
+- `docs/hardware/bring-up.md`: the bench bring-up checklist for a Rig.
 
 ## Development
 
@@ -17,7 +18,7 @@ cargo run -p itch-sim    # prints `itch-sim listening on tcp://127.0.0.1:<port>`
 
 ### Firmware
 
-The firmware needs the `esp` Rust toolchain from [espup](https://github.com/esp-rs/espup) (`espup install`) and [espflash](https://github.com/esp-rs/espflash). Host `cargo test` covers the board support that needs no chip; the rest is checked on the bench.
+The firmware needs the `esp` Rust toolchain from [espup](https://github.com/esp-rs/espup) (`espup install`) and [espflash](https://github.com/esp-rs/espflash). Host `cargo test` covers the board support that needs no chip; the rest is checked on the bench with the [bring-up checklist](docs/hardware/bring-up.md), whose per-Rig items run before each Rig goes to QA.
 
 ```sh
 cargo +esp build-firmware    # target/xtensa-esp32s3-none-elf/firmware/itch-firmware
