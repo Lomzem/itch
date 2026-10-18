@@ -69,7 +69,7 @@ async fn rig(mut rig: Rig, mut board: RealBoard) {
             Either::First(()) => {
                 rig.tick(&mut board);
                 board.tick();
-                supervisor::check_in();
+                supervisor::check_in(board.now());
                 continue;
             }
             Either::Second(request) => request,

@@ -31,7 +31,7 @@ The examples use a made-up Rig with Hardware ID `60:55:F9:C0:27:18`, so its defa
 | USB write timeout, 100 ms | `WRITE_TIMEOUT` | `crates/itch-firmware/src/usb.rs` |
 | DTR/RTS on open: both up, or both down on Windows | `lines` in `UsbTransport.__init__` | itch-py `src/itch/_usb.py` |
 
-`SETTLE_MS` also paces `itch-sim`, so changing it keeps the simulator honest. If you raise `DEADLINE_MS` or `WATCHDOG_TIMEOUT`, keep the RWDT above the supervisor deadline. Raising either one also lengthens the 2 s fault-to-open bound, so update the spec to match.
+`SETTLE_MS` also paces `itch-sim`, so changing it keeps the simulator honest. If you raise `DEADLINE_MS` or `WATCHDOG_TIMEOUT`, keep the RWDT above the supervisor deadline. Both must stay above the longest single flash erase or write: `rig` checks in around each one, and a check-in in time feeds the RWDT, but nothing runs during one. Raising either one also lengthens the 2 s fault-to-open bound, so update the spec to match.
 
 ## 1. Module **[per-Rig]**
 
@@ -140,9 +140,9 @@ Each case needs a throwaway build from a scratch branch; don't commit it. Make t
 
 ## 14. Flash stall
 
-- **Method:** inside a session, time 100 back-to-back `set_label` calls, each with a different 64-byte label. Then carry on, about 2,000 writes in all, until the 64 KiB `settings` partition has wrapped and erased sectors. Subtract a typical `status()` round trip from the longest `set_label` call; that difference is the stall. Restore the label afterwards.
-- **Pass:** the longest stall is under 400 ms, and `uptime` and `reset_reason` show no watchdog reset.
-- **If it fails:** every flash operation goes through `Supervised` in `crates/itch-firmware/src/settings.rs`, which checks in before and after each one, with erases split per sector. If a single operation still stalls too long, raise `DEADLINE_MS` and `WATCHDOG_TIMEOUT` (see the note under the table).
+- **Method:** inside a session, time 100 back-to-back `set_label` calls, each with a different 64-byte label. Then carry on, about 2,000 writes in all, until the 64 KiB `settings` partition has wrapped and erased sectors. Subtract a typical `status()` round trip from the longest `set_label` call; that difference is the stall. Then corrupt the partition so the next save erases all 16 sectors: write 64 KiB of random bytes to it (`head -c 65536 /dev/urandom > noise.bin`, then `espflash write-bin 0x400000 noise.bin`), boot, and time one `set_label`. Restore the label afterwards.
+- **Pass:** the longest stall of a normal save is under 400 ms. The save after the corruption succeeds, however long it takes, even past `DEADLINE_MS`, and the label survives a power cycle. No call is followed by a watchdog reset: `uptime` keeps counting and `reset_reason` is unchanged.
+- **If it fails:** every flash operation goes through `Supervised` in `crates/itch-firmware/src/settings.rs`, which checks in before and after each one, with erases split per sector. Each check-in carries its time and feeds the RWDT, so only the gap between two check-ins counts, never the whole save. If a single erase or write still stalls too long, raise `DEADLINE_MS` and `WATCHDOG_TIMEOUT` (see the note under the table).
 
 ## 15. Relay settling
 

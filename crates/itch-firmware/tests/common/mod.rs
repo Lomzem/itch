@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{ErrorType as PinErrorType, OutputPin};
@@ -16,7 +17,7 @@ use itch_core::rig::{Handled, Rig};
 use itch_core::wire::{Message, Reply, Request, Response, SetLabel, WriteChannels};
 use itch_firmware::board::{Chip, RevA};
 use itch_firmware::settings::PARTITION;
-use itch_firmware::supervisor::{self, DEADLINE_MS, Latch, ResetLine, Supervisor};
+use itch_firmware::supervisor::{DEADLINE_MS, LAST_CHECK_IN, Latch, ResetLine, Supervisor};
 
 const ADDRESS: u8 = 0x20;
 pub const IODIRA: u8 = 0x00;
@@ -200,6 +201,26 @@ impl DelayNs for NoDelay {
     fn delay_ns(&mut self, _ns: u32) {}
 }
 
+thread_local! {
+    /// The bench clock in ms since boot, one per test. It only moves when
+    /// a test or a flash stall moves it.
+    static CLOCK: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The bench clock, as the board reads it.
+pub fn now() -> u64 {
+    CLOCK.with(Cell::get)
+}
+
+pub fn advance(ms: u64) {
+    CLOCK.with(|clock| clock.set(clock.get() + ms));
+}
+
+/// How long since `rig` last checked in with the global supervisor.
+pub fn since_check_in() -> u32 {
+    (now() as u32).wrapping_sub(LAST_CHECK_IN.load(Ordering::Relaxed))
+}
+
 const SECTOR: usize = 4096;
 
 /// A simulated NOR flash holding the settings partition, which keeps its
@@ -209,8 +230,10 @@ pub struct Flash {
     bytes: Vec<u8>,
     /// Fails every erase and write.
     pub broken: bool,
-    /// The supervisor's check-in count at each sector erase and each write,
-    /// oldest first.
+    /// How long each sector erase and each write stalls the chip.
+    pub stall_ms: u64,
+    /// How long since `rig` last checked in, in ms, at the start of each
+    /// sector erase and each write, oldest first.
     pub writes: Vec<u32>,
 }
 
@@ -218,7 +241,12 @@ impl Flash {
     /// A partition never written, as on a new module.
     pub fn erased() -> Rc<RefCell<Self>> {
         let len = (PARTITION.end - PARTITION.start) as usize;
-        Rc::new(RefCell::new(Self { bytes: vec![0xFF; len], broken: false, writes: vec![] }))
+        Rc::new(RefCell::new(Self {
+            bytes: vec![0xFF; len],
+            broken: false,
+            stall_ms: 0,
+            writes: vec![],
+        }))
     }
 
     /// Overwrites the whole partition with noise.
@@ -251,7 +279,8 @@ impl Flash {
     }
 
     fn change(&mut self) -> Result<(), NorFlashErrorKind> {
-        self.writes.push(supervisor::CHECK_INS.load(std::sync::atomic::Ordering::Relaxed));
+        self.writes.push(since_check_in());
+        advance(self.stall_ms);
         if self.broken { Err(NorFlashErrorKind::Other) } else { Ok(()) }
     }
 }
@@ -339,7 +368,7 @@ impl Bench {
                 hardware_id: [0x02, 0x00, 0x00, 0xAC, 0xE0, 0x01],
                 reset_reason: 0x01,
                 last_panic: "",
-                now: || 0,
+                now,
                 counters: Counters::default,
             },
         );
@@ -364,7 +393,7 @@ impl Bench {
     /// Has the supervisor find that `rig` missed its deadline, as if the
     /// `rig` task had stalled and is only now running again.
     pub fn trip_supervisor(&mut self) {
-        Supervisor::new(self.latch, 0).check(0, DEADLINE_MS);
+        Supervisor::new(self.latch, &AtomicU32::new(0)).check(DEADLINE_MS);
         self.expander.borrow_mut().pull_reset();
     }
 

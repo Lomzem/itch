@@ -77,9 +77,10 @@ pub struct Settings<F: NorFlash> {
 }
 
 impl<F: NorFlash> Settings<F> {
-    pub fn new(flash: F) -> Self {
+    /// `now` is the time in ms since boot, for `rig`'s check-ins.
+    pub fn new(flash: F, now: fn() -> u64) -> Self {
         let map = MapStorage::new(
-            BlockingAsync::new(Supervised(flash)),
+            BlockingAsync::new(Supervised { flash, now }),
             MapConfig::new(PARTITION),
             Cache::new_uncached(),
         );
@@ -113,9 +114,13 @@ impl<F: NorFlash> Settings<F> {
 }
 
 /// A flash on which `rig` checks in with the supervisor right before and
-/// after each erase and write, since each one stalls it. Erases go a sector
-/// at a time, so no stall is longer than one sector's.
-struct Supervised<F>(F);
+/// after each erase and write, since each one stalls the whole executor.
+/// Erases go a sector at a time, so no gap between check-ins is longer
+/// than one sector's stall, however long the whole save takes.
+struct Supervised<F> {
+    flash: F,
+    now: fn() -> u64,
+}
 
 impl<F: ErrorType> ErrorType for Supervised<F> {
     type Error = F::Error;
@@ -125,11 +130,11 @@ impl<F: ReadNorFlash> ReadNorFlash for Supervised<F> {
     const READ_SIZE: usize = F::READ_SIZE;
 
     fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result<(), F::Error> {
-        self.0.read(offset, bytes)
+        self.flash.read(offset, bytes)
     }
 
     fn capacity(&self) -> usize {
-        self.0.capacity()
+        self.flash.capacity()
     }
 }
 
@@ -139,19 +144,21 @@ impl<F: NorFlash> NorFlash for Supervised<F> {
 
     fn erase(&mut self, from: u32, to: u32) -> Result<(), F::Error> {
         for sector in (from..to).step_by(F::ERASE_SIZE) {
-            supervised(|| self.0.erase(sector, sector + F::ERASE_SIZE as u32))?;
+            self.supervised(|flash| flash.erase(sector, sector + F::ERASE_SIZE as u32))?;
         }
         Ok(())
     }
 
     fn write(&mut self, offset: u32, bytes: &[u8]) -> Result<(), F::Error> {
-        supervised(|| self.0.write(offset, bytes))
+        self.supervised(|flash| flash.write(offset, bytes))
     }
 }
 
-fn supervised<T>(stall: impl FnOnce() -> T) -> T {
-    supervisor::check_in();
-    let result = stall();
-    supervisor::check_in();
-    result
+impl<F> Supervised<F> {
+    fn supervised<T>(&mut self, stall: impl FnOnce(&mut F) -> T) -> T {
+        supervisor::check_in((self.now)());
+        let result = stall(&mut self.flash);
+        supervisor::check_in((self.now)());
+        result
+    }
 }

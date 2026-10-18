@@ -1,24 +1,43 @@
-//! The supervisor: watches the `rig` task and feeds the RTC watchdog while
-//! `rig` keeps checking in. Once `rig` misses its deadline the supervisor
-//! drives the expander RESET low, latches the failure and stops feeding,
-//! so the watchdog resets the chip.
+//! The supervisor: watches the `rig` task and keeps the RTC watchdog fed
+//! while `rig` keeps checking in. Once `rig` misses its deadline the
+//! supervisor drives the expander RESET low, latches the failure and stops
+//! feeding, so the watchdog resets the chip.
+//!
+//! `rig` and the supervisor share one executor, and a flash operation
+//! blocks it, so each check-in carries its own time and feeds the watchdog
+//! itself: a save that keeps checking in stays in time however long it
+//! takes, with the supervisor shut out.
 
+#[cfg(feature = "firmware")]
+use core::cell::RefCell;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
+#[cfg(feature = "firmware")]
+use embassy_sync::blocking_mutex::Mutex;
+#[cfg(feature = "firmware")]
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embedded_hal::digital::{ErrorType, OutputPin};
+#[cfg(feature = "firmware")]
+use esp_hal::rtc_cntl::Rwdt;
 
 /// How long `rig` may go without checking in.
 pub const DEADLINE_MS: u64 = 1000;
 
-/// How many times `rig` has checked in. It wraps.
-pub static CHECK_INS: AtomicU32 = AtomicU32::new(0);
+/// When `rig` last checked in, in ms since boot. It wraps after 49 days:
+/// the chip has no 64-bit atomics.
+pub static LAST_CHECK_IN: AtomicU32 = AtomicU32::new(0);
 
 /// Set once `rig` misses its deadline.
 pub static TRIPPED: Latch = Latch::new();
 
-/// Called by `rig` on every idle tick.
-pub fn check_in() {
-    CHECK_INS.fetch_add(1, Ordering::Relaxed);
+/// The supervisor of the `rig` task.
+pub static SUPERVISOR: Supervisor<'static> = Supervisor::new(&TRIPPED, &LAST_CHECK_IN);
+
+/// Called by `rig` on every idle tick and around every flash stall, at
+/// `now` ms since boot. A check-in in time feeds the watchdog; a late one
+/// is a miss.
+pub fn check_in(now: u64) {
+    act(SUPERVISOR.check_in(now));
 }
 
 /// A failure flag that only a reset clears.
@@ -84,49 +103,77 @@ pub enum Check {
 /// Tracks `rig`'s check-ins against its deadline.
 pub struct Supervisor<'a> {
     latch: &'a Latch,
-    check_ins: u32,
-    /// When `check_ins` last changed, in ms since boot.
-    since: u64,
+    last_check_in: &'a AtomicU32,
 }
 
 impl<'a> Supervisor<'a> {
-    /// Starts the deadline at `now`, before `rig`'s first check-in.
-    pub fn new(latch: &'a Latch, now: u64) -> Self {
-        Self { latch, check_ins: 0, since: now }
+    pub const fn new(latch: &'a Latch, last_check_in: &'a AtomicU32) -> Self {
+        Self { latch, last_check_in }
     }
 
-    /// Checks `rig` given its check-in count, tripping `latch` on a miss. A
-    /// check-in that arrives after the deadline is still a miss.
-    pub fn check(&mut self, check_ins: u32, now: u64) -> Check {
-        if now.saturating_sub(self.since) >= DEADLINE_MS {
+    /// Starts the deadline at `now`, before `rig`'s first check-in.
+    pub fn start(&self, now: u64) {
+        self.last_check_in.store(now as u32, Ordering::Relaxed);
+    }
+
+    /// Records `rig` checking in at `now`, tripping `latch` if it comes
+    /// [`DEADLINE_MS`] or more after the last one.
+    pub fn check_in(&self, now: u64) -> Check {
+        self.judge(self.last_check_in.swap(now as u32, Ordering::Relaxed), now)
+    }
+
+    /// Checks `rig` at `now`, tripping `latch` once it has gone
+    /// [`DEADLINE_MS`] without checking in.
+    pub fn check(&self, now: u64) -> Check {
+        self.judge(self.last_check_in.load(Ordering::Relaxed), now)
+    }
+
+    fn judge(&self, last_check_in: u32, now: u64) -> Check {
+        if u64::from((now as u32).wrapping_sub(last_check_in)) >= DEADLINE_MS {
             self.latch.trip();
-        }
-        if check_ins != self.check_ins {
-            self.check_ins = check_ins;
-            self.since = now;
         }
         if self.latch.tripped() { Check::Missed } else { Check::Fresh }
     }
 }
 
-/// Feeds the RTC watchdog while `rig` keeps checking in. After a miss it
-/// holds the expander in reset until the watchdog resets the chip.
+/// The RTC watchdog, fed by both `rig`'s check-ins and the supervisor.
+#[cfg(feature = "firmware")]
+static WATCHDOG: Mutex<CriticalSectionRawMutex, RefCell<Option<Rwdt>>> =
+    Mutex::new(RefCell::new(None));
+
+/// Feeds the watchdog while `rig` is in time. After a miss it holds the
+/// expander in reset and stops feeding, so the watchdog resets the chip.
+#[cfg(feature = "firmware")]
+fn act(check: Check) {
+    match check {
+        Check::Fresh => WATCHDOG.lock(|watchdog| {
+            if let Some(watchdog) = watchdog.borrow_mut().as_mut() {
+                watchdog.feed();
+            }
+        }),
+        Check::Missed => crate::board::force_reset_low(),
+    }
+}
+
+#[cfg(not(feature = "firmware"))]
+fn act(_: Check) {}
+
+/// Checks on `rig` between its check-ins, which catches a `rig` that
+/// stopped checking in at all.
 #[cfg(feature = "firmware")]
 #[embassy_executor::task]
-pub async fn supervisor(mut watchdog: esp_hal::rtc_cntl::Rwdt) {
+pub async fn supervisor(watchdog: Rwdt) {
     use embassy_time::{Duration, Instant, Ticker};
 
     /// How often the supervisor checks on `rig`.
     const PERIOD: Duration = Duration::from_millis(50);
 
     let now = || Instant::now().as_millis();
-    let mut supervisor = Supervisor::new(&TRIPPED, now());
+    WATCHDOG.lock(|cell| cell.replace(Some(watchdog)));
+    SUPERVISOR.start(now());
     let mut ticker = Ticker::every(PERIOD);
     loop {
-        match supervisor.check(CHECK_INS.load(Ordering::Relaxed), now()) {
-            Check::Fresh => watchdog.feed(),
-            Check::Missed => crate::board::force_reset_low(),
-        }
+        act(SUPERVISOR.check(now()));
         ticker.next().await;
     }
 }

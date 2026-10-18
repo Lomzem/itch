@@ -106,7 +106,7 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
             channels: 0,
             faulted: false,
             blink: false,
-            settings: Settings::new(flash),
+            settings: Settings::new(flash, chip.now),
         }
     }
 
@@ -281,7 +281,7 @@ mod esp32s3 {
     const I2C_TIMEOUT: Duration = Duration::from_millis(10);
 
     /// How long the RTC watchdog waits for a feed before it resets the whole
-    /// chip. Only the supervisor feeds it.
+    /// chip. Only the supervisor and `rig`'s check-ins in time feed it.
     const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(2);
 
     /// The crash record a panic leaves for the next boot. RTC RAM keeps it
