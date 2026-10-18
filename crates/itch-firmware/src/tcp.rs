@@ -21,12 +21,12 @@ use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{
     AuthenticationMethodConfig, Config, ControllerConfig, Interface, WifiController,
 };
-use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
+use itch_core::frame::{FrameDecoder, MAX_FRAME};
 use itch_core::logs::LogQueue;
 use itch_core::wire::LogLevel;
 use static_cell::StaticCell;
 
-use crate::queue::{self, Payload, Replies, Transport};
+use crate::queue::{self, Logs, Payload, Replies, Transport};
 
 /// The network to join, from the build environment. Development only: a
 /// production build has no credentials.
@@ -61,8 +61,7 @@ pub static REPLIES: Replies = Channel::new();
 
 /// Log Events waiting for `tcp_tx`, filtered by the connection's log level.
 /// Logs are off between connections.
-pub static LOGS: Mutex<CriticalSectionRawMutex, RefCell<LogQueue<LOG_BYTES>>> =
-    Mutex::new(RefCell::new(LogQueue::new()));
+pub static LOGS: Logs<LOG_BYTES> = Mutex::new(RefCell::new(LogQueue::new()));
 
 /// Wakes `tcp_tx` after a log line is queued.
 pub static LOGGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -179,17 +178,9 @@ async fn tcp_rx(mut rx: TcpReader<'_>) {
 /// Sends replies, then Log Events, one frame at a time, until the
 /// connection fails.
 async fn tcp_tx(mut tx: TcpWriter<'_>) {
-    let mut log = [0; MAX_PAYLOAD];
     let mut frame = [0; MAX_FRAME];
     loop {
-        let len = if let Ok(reply) = REPLIES.try_receive() {
-            encode_frame(reply.as_bytes(), &mut frame)
-        } else if let Some(len) = LOGS.lock(|logs| logs.borrow_mut().pop(&mut log)) {
-            encode_frame(&log[..len], &mut frame)
-        } else {
-            select(REPLIES.ready_to_receive(), LOGGED.wait()).await;
-            continue;
-        };
+        let len = queue::next_frame(&REPLIES, &LOGS, &LOGGED, &mut frame).await;
         let sent = with_timeout(
             WRITE_TIMEOUT,
             embedded_io_async::Write::write_all(&mut tx, &frame[..len]),

@@ -74,7 +74,7 @@ pub struct RevA<I2C, RESET, LED, DELAY, FLASH: NorFlash> {
     info: BoardInfo,
     chip: Chip,
     /// The Channels last driven, bit 0 = CH1.
-    outputs: u16,
+    channels: u16,
     /// The last expander operation failed.
     faulted: bool,
     /// Where a fault blink is: lit or not.
@@ -90,7 +90,7 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
         let info = BoardInfo {
             hardware_id: chip.hardware_id,
             firmware_version: env!("CARGO_PKG_VERSION"),
-            dirty: false,
+            dirty: env!("ITCH_DIRTY") == "true",
             features: FEATURES,
             board_revision: "A",
             reset_reason: chip.reset_reason,
@@ -103,7 +103,7 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
             delay,
             info,
             chip,
-            outputs: 0,
+            channels: 0,
             faulted: false,
             blink: false,
             settings: Settings::new(flash),
@@ -120,7 +120,7 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
     /// The status LED is on while any Channel is on, and blinks while the
     /// expander is faulted.
     fn show_status(&mut self) {
-        let lit = if self.faulted { self.blink } else { self.outputs != 0 };
+        let lit = if self.faulted { self.blink } else { self.channels != 0 };
         let _ = self.led.set_state(lit.into());
     }
 
@@ -169,17 +169,17 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
         self.info
     }
 
-    fn write_outputs(&mut self, state: u16) -> Result<(), HwFault> {
+    fn write_channels(&mut self, state: u16) -> Result<(), HwFault> {
         let result = self.write_pair(OLATA, ports(state));
         if result.is_ok() {
-            self.outputs = state;
+            self.channels = state;
         }
         self.faulted = result.is_err();
         self.show_status();
         result
     }
 
-    fn read_outputs(&mut self) -> Result<u16, HwFault> {
+    fn read_channels(&mut self) -> Result<u16, HwFault> {
         let result = self.driven();
         self.faulted = result.is_err();
         self.show_status();
@@ -190,7 +190,7 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
     /// closes on the way. If the expander doesn't come up, it is held in
     /// reset, which keeps every contact open.
     fn reinit(&mut self) -> Result<(), HwFault> {
-        self.outputs = 0;
+        self.channels = 0;
         let result = self.bring_up();
         if result.is_err() {
             let _ = self.reset.set_low();
@@ -198,6 +198,13 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
         self.faulted = result.is_err();
         self.show_status();
         result
+    }
+
+    fn hold_in_reset(&mut self) {
+        let _ = self.reset.set_low();
+        self.channels = 0;
+        self.faulted = true;
+        self.show_status();
     }
 
     fn now(&self) -> u64 {

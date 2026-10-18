@@ -119,7 +119,7 @@ fn a_tick_leaves_a_healthy_expander_alone() {
 fn reads_back_the_channels_on_the_reversed_rev_a_wiring() {
     let mut bench = Bench::boot();
     bench.write(0xFFFF, 0x0181);
-    assert_eq!(bench.board.read_outputs(), Ok(0x0181));
+    assert_eq!(bench.board.read_channels(), Ok(0x0181));
 }
 
 #[test]
@@ -133,6 +133,17 @@ fn an_expander_that_comes_back_gets_its_channels_restored() {
     bench.expander.borrow_mut().absent = false;
     bench.tick();
     assert_eq!(bench.driven(), (0x80, 0x81));
+}
+
+#[test]
+fn a_restore_that_fails_after_the_expander_comes_back_holds_it_in_reset() {
+    let mut bench = Bench::boot();
+    bench.write(0xFFFF, 0x0181);
+    bench.expander.borrow_mut().brown_out();
+    bench.expander.borrow_mut().torn = true;
+    bench.tick();
+    assert!(bench.expander.borrow().in_reset());
+    assert_eq!(bench.driven(), (0x00, 0x00));
 }
 
 #[test]

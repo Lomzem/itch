@@ -27,9 +27,11 @@ pub const VERSION: u16 = 1;
 
 /// The record's layout: the version (little-endian), the label's length,
 /// then the label.
-const LABEL_LEN: usize = 2;
-const LABEL: usize = LABEL_LEN + 1;
-pub const MAX_RECORD: usize = LABEL + MAX_LABEL;
+const VERSION_LEN: usize = 2;
+/// Where the label's length sits, straight after the version.
+const LABEL_LEN_AT: usize = VERSION_LEN;
+const LABEL_AT: usize = LABEL_LEN_AT + 1;
+pub const MAX_RECORD: usize = LABEL_AT + MAX_LABEL;
 
 /// A settings record.
 pub struct Record {
@@ -47,16 +49,16 @@ impl Record {
 pub fn encode(label: &Label) -> Record {
     let label = label.as_str().as_bytes();
     let mut bytes = [0; MAX_RECORD];
-    bytes[..LABEL_LEN].copy_from_slice(&VERSION.to_le_bytes());
-    bytes[LABEL_LEN] = label.len() as u8;
-    bytes[LABEL..LABEL + label.len()].copy_from_slice(label);
-    Record { bytes, len: LABEL + label.len() }
+    bytes[..VERSION_LEN].copy_from_slice(&VERSION.to_le_bytes());
+    bytes[LABEL_LEN_AT] = label.len() as u8;
+    bytes[LABEL_AT..LABEL_AT + label.len()].copy_from_slice(label);
+    Record { bytes, len: LABEL_AT + label.len() }
 }
 
 /// The label `record` saves, or `None` unless it is a whole record of this
 /// version.
 pub fn decode(record: &[u8]) -> Option<Label> {
-    let (version, rest) = record.split_first_chunk::<LABEL_LEN>()?;
+    let (version, rest) = record.split_first_chunk::<VERSION_LEN>()?;
     let (&len, label) = rest.split_first()?;
     if u16::from_le_bytes(*version) != VERSION || label.len() != usize::from(len) {
         return None;

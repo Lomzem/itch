@@ -1,4 +1,7 @@
+include!("../../build/dirty.rs");
+
 fn main() {
+    emit_dirty();
     // Only the firmware binary links against the ESP32-S3 memory map.
     if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("xtensa") {
         println!("cargo:rustc-link-arg-bins=-nostartfiles");

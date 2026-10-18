@@ -136,7 +136,7 @@ Each case needs a throwaway build from a scratch branch; don't commit it. Make t
 
 - **Method:** with Channels on, hold the expander RESET (GPIO6) to GND, then release it. Separately, short SDA to GND for well under a tick (an I2C glitch). If the board lets you, also briefly dip the expander's supply (a brownout).
 - **Pass:** while RESET is held, the contacts are open and the LED blinks fast. After release, or after the glitch, the commanded Channels come back without a reboot, and `expander_faults` counts each fault once.
-- **If it fails:** see `Rig::tick` and `recover` in `crates/itch-core/src/rig.rs`, and `reinit` / `bring_up` in `crates/itch-firmware/src/board.rs`.
+- **If it fails:** see `Rig::tick` and `recover` in `crates/itch-core/src/rig.rs`, and `reinit` / `bring_up` / `hold_in_reset` in `crates/itch-firmware/src/board.rs`.
 
 ## 14. Flash stall
 

@@ -20,10 +20,10 @@ fn expander_faults(rig: &mut TestRig) -> u32 {
 fn a_tick_restores_channels_the_expander_lost() {
     let mut rig = TestRig::new();
     rig.ok(write(0xFFFF, 0x8001));
-    rig.board.outputs = 0x0000;
+    rig.board.channels = 0x0000;
     rig.tick();
     assert_eq!(rig.board.reinits, 1);
-    assert_eq!(rig.board.outputs, 0x8001);
+    assert_eq!(rig.board.channels, 0x8001);
     assert_eq!(expander_faults(&mut rig), 1);
 }
 
@@ -33,7 +33,7 @@ fn a_tick_recovers_from_an_i2c_error() {
     rig.ok(write(0xFFFF, 0x0102));
     rig.board.glitch = true;
     rig.tick();
-    assert_eq!(rig.board.outputs, 0x0102);
+    assert_eq!(rig.board.channels, 0x0102);
     assert_eq!(expander_faults(&mut rig), 1);
 }
 
@@ -60,6 +60,18 @@ fn an_expander_that_does_not_come_back_holds_every_channel_off() {
 }
 
 #[test]
+fn a_restore_that_fails_after_reinit_holds_every_channel_off() {
+    let mut rig = TestRig::new();
+    rig.ok(write(0xFFFF, 0x0102));
+    rig.board.torn_writes = true;
+    assert_eq!(rig.refused(write(0x0001, 0x0001)), ErrorCode::HardwareFault);
+    assert_eq!(rig.board.channels, 0);
+    rig.tick();
+    assert_eq!(rig.board.channels, 0);
+    assert_eq!(rig.ok(Request::GetChannels), Reply::GetChannels { state: 0 });
+}
+
+#[test]
 fn a_held_expander_is_retried_on_every_tick_and_counted_once() {
     let mut rig = TestRig::new();
     rig.board.unreachable = true;
@@ -79,7 +91,7 @@ fn a_later_tick_that_brings_the_expander_back_restores_the_commanded_channels() 
     rig.tick();
     rig.board.unreachable = false;
     rig.tick();
-    assert_eq!(rig.board.outputs, 0x0102);
+    assert_eq!(rig.board.channels, 0x0102);
     assert_eq!(rig.ok(Request::GetChannels), Reply::GetChannels { state: 0x0102 });
     assert_eq!(rig.ok(write(0x0001, 0x0001)), Reply::WriteChannels { state: 0x0103 });
     assert_eq!(expander_faults(&mut rig), 1);
@@ -92,7 +104,7 @@ fn a_write_that_hits_an_i2c_error_recovers_and_succeeds() {
     rig.board.glitch = true;
     assert_eq!(rig.ok(write(0x0001, 0x0001)), Reply::WriteChannels { state: 0x0103 });
     assert!(rig.settled);
-    assert_eq!(rig.board.outputs, 0x0103);
+    assert_eq!(rig.board.channels, 0x0103);
     assert_eq!(expander_faults(&mut rig), 1);
 }
 
@@ -105,5 +117,5 @@ fn a_write_refused_for_a_hardware_fault_changes_nothing() {
     rig.board.unreachable = false;
     rig.tick();
     assert_eq!(rig.ok(Request::GetChannels), Reply::GetChannels { state: 0x0102 });
-    assert_eq!(rig.board.outputs, 0x0102);
+    assert_eq!(rig.board.channels, 0x0102);
 }

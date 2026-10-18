@@ -47,6 +47,9 @@ pub struct Expander {
     pub absent: bool,
     /// Acknowledges writes but ignores them, as if wedged.
     pub stuck: bool,
+    /// Writes that set any latch break off after their first data byte, as
+    /// when the bus glitches mid-transfer. Clearing writes still go through.
+    pub torn: bool,
     /// Every operation since power-on, oldest first.
     pub log: Vec<Op>,
 }
@@ -59,6 +62,7 @@ impl Expander {
             in_reset: true,
             absent: false,
             stuck: false,
+            torn: false,
             log: vec![],
         };
         expander.reset();
@@ -125,9 +129,14 @@ impl I2c for Bus {
                     if expander.stuck {
                         continue;
                     }
+                    let torn = expander.torn && data.iter().any(|&byte| byte != 0);
+                    let data = if torn { &data[..1] } else { data };
                     for &byte in data {
                         let at = expander.next();
                         expander.registers[at] = byte;
+                    }
+                    if torn {
+                        return Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data));
                     }
                 }
                 Operation::Read(buffer) => {

@@ -19,7 +19,7 @@ pub struct SimBoard {
     /// How many times faster than real time the clock runs.
     clock_rate: u32,
     /// What the simulated expander drives, bit 0 = CH1.
-    outputs: u16,
+    channels: u16,
     /// The expander is unreachable, so every operation on it fails.
     hardware_fault: bool,
     /// The saved label, for this run only.
@@ -35,7 +35,7 @@ impl SimBoard {
                 // A locally administered MAC, so it can't clash with a real Rig.
                 hardware_id: [0x02, 0x00, 0x00, 0x51, 0x4D, 0x01],
                 firmware_version: env!("CARGO_PKG_VERSION"),
-                dirty: false,
+                dirty: env!("ITCH_DIRTY") == "true",
                 features: 0,
                 board_revision: "sim",
                 // `ChipPowerOn`: every sim run is a fresh boot.
@@ -44,7 +44,7 @@ impl SimBoard {
             },
             booted: Instant::now(),
             clock_rate,
-            outputs: 0,
+            channels: 0,
             hardware_fault,
             label: None,
             storage_fault,
@@ -63,20 +63,24 @@ impl Board for SimBoard {
         self.info
     }
 
-    fn write_outputs(&mut self, state: u16) -> Result<(), HwFault> {
+    fn write_channels(&mut self, state: u16) -> Result<(), HwFault> {
         self.expander()?;
-        self.outputs = state;
+        self.channels = state;
         Ok(())
     }
 
-    fn read_outputs(&mut self) -> Result<u16, HwFault> {
+    fn read_channels(&mut self) -> Result<u16, HwFault> {
         self.expander()?;
-        Ok(self.outputs)
+        Ok(self.channels)
     }
 
     fn reinit(&mut self) -> Result<(), HwFault> {
-        self.outputs = 0;
+        self.channels = 0;
         self.expander()
+    }
+
+    fn hold_in_reset(&mut self) {
+        self.channels = 0;
     }
 
     fn now(&self) -> u64 {
