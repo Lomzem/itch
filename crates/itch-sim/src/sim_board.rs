@@ -35,7 +35,7 @@ impl SimBoard {
                 // A locally administered MAC, so it can't clash with a real Rig.
                 hardware_id: [0x02, 0x00, 0x00, 0x51, 0x4D, 0x01],
                 firmware_version: env!("CARGO_PKG_VERSION"),
-                dirty: false,
+                dirty: env!("ITCH_DIRTY") == "true",
                 features: 0,
                 board_revision: "sim",
                 // `ChipPowerOn`: every sim run is a fresh boot.

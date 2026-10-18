@@ -90,7 +90,7 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
         let info = BoardInfo {
             hardware_id: chip.hardware_id,
             firmware_version: env!("CARGO_PKG_VERSION"),
-            dirty: false,
+            dirty: env!("ITCH_DIRTY") == "true",
             features: FEATURES,
             board_revision: "A",
             reset_reason: chip.reset_reason,
