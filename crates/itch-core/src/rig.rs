@@ -38,7 +38,7 @@ pub struct Rig {
     expander_faults: u32,
     /// The expander didn't come back up, so it is held in reset with every
     /// Channel off.
-    held: bool,
+    held_in_reset: bool,
 }
 
 impl Rig {
@@ -54,7 +54,7 @@ impl Rig {
             channels: 0,
             malformed_frames: 0,
             expander_faults: 0,
-            held: false,
+            held_in_reset: false,
         }
     }
 
@@ -107,7 +107,7 @@ impl Rig {
     /// The idle tick, every ~50 ms. Re-initialises the expander if it no
     /// longer drives the commanded Channels, and retries one held in reset.
     pub fn tick<B: Board>(&mut self, board: &mut B) {
-        if !self.held {
+        if !self.held_in_reset {
             if board.read_channels() == Ok(self.channels) {
                 return;
             }
@@ -149,7 +149,7 @@ impl Rig {
             // The transport applies the level; see `Handled::SetLogLevel`.
             Request::SetLogLevel { .. } => Reply::SetLogLevel,
             Request::GetChannels => {
-                Reply::GetChannels { state: if self.held { 0 } else { self.channels } }
+                Reply::GetChannels { state: if self.held_in_reset { 0 } else { self.channels } }
             }
             Request::GetStatus => {
                 let info = board.info();
@@ -212,7 +212,7 @@ impl Rig {
     /// Drives the Channels to `state` and makes it the commanded state. A
     /// failed write re-initialises the expander and tries again.
     fn write<B: Board>(&mut self, board: &mut B, state: u16) -> Result<u16, ErrorCode> {
-        if self.held {
+        if self.held_in_reset {
             return Err(ErrorCode::HardwareFault);
         }
         if board.write_channels(state).is_err() {
@@ -232,12 +232,12 @@ impl Rig {
     /// expander is held in reset until a later tick brings it back.
     fn recover<B: Board>(&mut self, board: &mut B, state: u16) -> Result<(), ErrorCode> {
         let recovered = board.reinit().and_then(|()| board.write_channels(state)).is_ok();
-        if recovered && self.held {
+        if recovered && self.held_in_reset {
             log::info!("the expander is back; Channels restored");
-        } else if !recovered && !self.held {
+        } else if !recovered && !self.held_in_reset {
             log::error!("the expander didn't come back; holding every Channel off");
         }
-        self.held = !recovered;
+        self.held_in_reset = !recovered;
         if recovered { Ok(()) } else { Err(ErrorCode::HardwareFault) }
     }
 }
