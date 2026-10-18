@@ -4,18 +4,17 @@
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, with_timeout};
-use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
+use itch_core::frame::{FrameDecoder, MAX_FRAME};
 use itch_core::logs::LogQueue;
 use itch_core::wire::LogLevel;
 
 use crate::board::{UsbRx, UsbTx};
-use crate::queue::{self, Replies, Transport};
+use crate::queue::{self, Logs, Replies, Transport};
 
 /// How long one frame may take to go out. After that the rest of it is
 /// dropped, so a host that stops reading never stalls the Rig.
@@ -31,8 +30,7 @@ pub static TX_DROPPED: AtomicU32 = AtomicU32::new(0);
 pub static REPLIES: Replies = Channel::new();
 
 /// Log Events waiting for `usb_tx`, filtered by the USB log level.
-pub static LOGS: Mutex<CriticalSectionRawMutex, RefCell<LogQueue<LOG_BYTES>>> =
-    Mutex::new(RefCell::new(LogQueue::new()));
+pub static LOGS: Logs<LOG_BYTES> = Mutex::new(RefCell::new(LogQueue::new()));
 
 /// Wakes `usb_tx` after a log line is queued.
 pub static LOGGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -59,18 +57,10 @@ pub async fn usb_rx(mut rx: UsbRx) {
 /// Sends replies, then Log Events, one frame at a time.
 #[embassy_executor::task]
 pub async fn usb_tx(mut tx: UsbTx) {
-    let mut log = [0; MAX_PAYLOAD];
     let mut frame = [0; MAX_FRAME];
     let mut timed_out = false;
     loop {
-        let len = if let Ok(reply) = REPLIES.try_receive() {
-            encode_frame(reply.as_bytes(), &mut frame)
-        } else if let Some(len) = LOGS.lock(|logs| logs.borrow_mut().pop(&mut log)) {
-            encode_frame(&log[..len], &mut frame)
-        } else {
-            select(REPLIES.ready_to_receive(), LOGGED.wait()).await;
-            continue;
-        };
+        let len = queue::next_frame(&REPLIES, &LOGS, &LOGGED, &mut frame).await;
         let sent = with_timeout(WRITE_TIMEOUT, async {
             // A timed-out frame can leave a packet the host hasn't read, and
             // esp-hal writes without waiting for room, so wait for the host.
