@@ -24,6 +24,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - run: rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
       - run: rustup default stable
       - run: cargo test --workspace --locked
@@ -48,6 +50,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Check the tag matches the workspace version
         run: |
           version=$(cargo metadata --no-deps --format-version 1 \
