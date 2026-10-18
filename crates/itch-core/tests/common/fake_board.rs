@@ -4,10 +4,10 @@ use itch_core::label::Label;
 /// A Board for host tests. Its facts match the `hello-ok` vector.
 pub struct FakeBoard {
     pub info: BoardInfo,
-    /// Every output write the expander took, oldest first. Bit 0 = CH1.
+    /// Every Channel write the expander took, oldest first. Bit 0 = CH1.
     pub writes: Vec<u16>,
-    /// What the expander drives now, as `read_outputs` reports it.
-    pub outputs: u16,
+    /// What the expander drives now, as `read_channels` reports it.
+    pub channels: u16,
     /// Times the expander was re-initialised, successfully or not.
     pub reinits: u32,
     /// The next expander operation fails, as after an I2C glitch.
@@ -38,7 +38,7 @@ impl FakeBoard {
                 last_panic: "",
             },
             writes: Vec::new(),
-            outputs: 0,
+            channels: 0,
             reinits: 0,
             glitch: false,
             unreachable: false,
@@ -60,21 +60,21 @@ impl Board for FakeBoard {
         self.info
     }
 
-    fn write_outputs(&mut self, state: u16) -> Result<(), HwFault> {
+    fn write_channels(&mut self, state: u16) -> Result<(), HwFault> {
         self.reach()?;
         self.writes.push(state);
-        self.outputs = state;
+        self.channels = state;
         Ok(())
     }
 
-    fn read_outputs(&mut self) -> Result<u16, HwFault> {
+    fn read_channels(&mut self) -> Result<u16, HwFault> {
         self.reach()?;
-        Ok(self.outputs)
+        Ok(self.channels)
     }
 
     fn reinit(&mut self) -> Result<(), HwFault> {
         self.reinits += 1;
-        self.outputs = 0;
+        self.channels = 0;
         self.reach()
     }
 

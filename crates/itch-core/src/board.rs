@@ -7,10 +7,10 @@ pub trait Board {
     fn info(&self) -> BoardInfo;
 
     /// Drives the Channels to `state`, bit 0 = CH1.
-    fn write_outputs(&mut self, state: u16) -> Result<(), HwFault>;
+    fn write_channels(&mut self, state: u16) -> Result<(), HwFault>;
 
     /// Reads back the Channels the expander drives, bit 0 = CH1.
-    fn read_outputs(&mut self) -> Result<u16, HwFault>;
+    fn read_channels(&mut self) -> Result<u16, HwFault>;
 
     /// Pulses the expander's RESET and brings it back up with every Channel
     /// off. If it doesn't come up, it is held in reset, so every Channel

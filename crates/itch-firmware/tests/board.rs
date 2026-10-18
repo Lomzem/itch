@@ -119,7 +119,7 @@ fn a_tick_leaves_a_healthy_expander_alone() {
 fn reads_back_the_channels_on_the_reversed_rev_a_wiring() {
     let mut bench = Bench::boot();
     bench.write(0xFFFF, 0x0181);
-    assert_eq!(bench.board.read_outputs(), Ok(0x0181));
+    assert_eq!(bench.board.read_channels(), Ok(0x0181));
 }
 
 #[test]
