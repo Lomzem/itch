@@ -79,6 +79,10 @@ impl Board for SimBoard {
         self.expander()
     }
 
+    fn hold_in_reset(&mut self) {
+        self.channels = 0;
+    }
+
     fn now(&self) -> u64 {
         let elapsed = self.booted.elapsed().checked_mul(self.clock_rate).unwrap_or(Duration::MAX);
         u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)

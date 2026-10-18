@@ -14,6 +14,9 @@ pub struct FakeBoard {
     pub glitch: bool,
     /// Every expander operation fails, as if the expander were dead.
     pub unreachable: bool,
+    /// Every Channel write breaks off partway, after reaching some latches,
+    /// though the expander still re-initialises.
+    pub torn_writes: bool,
     /// The clock in milliseconds, moved by hand.
     pub now: u64,
     pub counters: Counters,
@@ -42,6 +45,7 @@ impl FakeBoard {
             reinits: 0,
             glitch: false,
             unreachable: false,
+            torn_writes: false,
             now: 0,
             counters: Counters::default(),
             stored: None,
@@ -62,6 +66,10 @@ impl Board for FakeBoard {
 
     fn write_channels(&mut self, state: u16) -> Result<(), HwFault> {
         self.reach()?;
+        if self.torn_writes {
+            self.channels = state;
+            return Err(HwFault);
+        }
         self.writes.push(state);
         self.channels = state;
         Ok(())
@@ -76,6 +84,10 @@ impl Board for FakeBoard {
         self.reinits += 1;
         self.channels = 0;
         self.reach()
+    }
+
+    fn hold_in_reset(&mut self) {
+        self.channels = 0;
     }
 
     fn now(&self) -> u64 {

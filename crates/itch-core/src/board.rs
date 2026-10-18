@@ -17,6 +17,10 @@ pub trait Board {
     /// stays off.
     fn reinit(&mut self) -> Result<(), HwFault>;
 
+    /// Holds the expander in reset, so every Channel is off, until the next
+    /// [`reinit`](Board::reinit).
+    fn hold_in_reset(&mut self);
+
     /// Milliseconds since boot, monotonic.
     fn now(&self) -> u64;
 

@@ -200,6 +200,13 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
         result
     }
 
+    fn hold_in_reset(&mut self) {
+        let _ = self.reset.set_low();
+        self.channels = 0;
+        self.faulted = true;
+        self.show_status();
+    }
+
     fn now(&self) -> u64 {
         (self.chip.now)()
     }

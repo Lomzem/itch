@@ -232,6 +232,9 @@ impl Rig {
     /// expander is held in reset until a later tick brings it back.
     fn recover<B: Board>(&mut self, board: &mut B, state: u16) -> Result<(), ErrorCode> {
         let recovered = board.reinit().and_then(|()| board.write_channels(state)).is_ok();
+        if !recovered {
+            board.hold_in_reset();
+        }
         if recovered && self.held_in_reset {
             log::info!("the expander is back; Channels restored");
         } else if !recovered && !self.held_in_reset {
