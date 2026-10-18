@@ -95,7 +95,7 @@ fn set_log_level(transport: Transport, level: LogLevel) {
     match transport {
         Transport::Usb => usb::set_log_level(level),
         #[cfg(feature = "wifi")]
-        Transport::Tcp => itch_firmware::tcp::set_log_level(level),
+        Transport::Tcp(connection) => itch_firmware::tcp::set_log_level(connection, level),
     }
 }
 
@@ -103,7 +103,7 @@ async fn send_reply(transport: Transport, reply: Payload) {
     match transport {
         Transport::Usb => usb::REPLIES.send(reply).await,
         #[cfg(feature = "wifi")]
-        Transport::Tcp => itch_firmware::tcp::reply(reply).await,
+        Transport::Tcp(connection) => itch_firmware::tcp::reply(connection, reply).await,
     }
 }
 

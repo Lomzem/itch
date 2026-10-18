@@ -5,6 +5,8 @@
 //! replies before Log Events.
 
 use core::cell::RefCell;
+use core::future::poll_fn;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use embassy_executor::Spawner;
 use embassy_futures::select::select;
@@ -12,7 +14,7 @@ use embassy_net::tcp::{TcpReader, TcpSocket, TcpWriter};
 use embassy_net::{Runner, Stack, StackResources};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
+use embassy_sync::channel::{Channel, TrySendError};
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer, with_timeout};
 use esp_hal::peripherals::WIFI;
@@ -59,6 +61,10 @@ const LOG_BYTES: usize = 4 * 1024;
 /// Replies waiting for `tcp_tx`.
 pub static REPLIES: Replies = Channel::new();
 
+/// The current connection's generation, bumped on every accept, so
+/// requests from an earlier connection get no reply on this one.
+static CONNECTION: AtomicU32 = AtomicU32::new(0);
+
 /// Log Events waiting for `tcp_tx`, filtered by the connection's log level.
 /// Logs are off between connections.
 pub static LOGS: Logs<LOG_BYTES> = Mutex::new(RefCell::new(LogQueue::new()));
@@ -69,14 +75,33 @@ pub static LOGGED: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 /// DHCP and the TCP listener.
 static RESOURCES: StaticCell<StackResources<2>> = StaticCell::new();
 
-pub fn set_log_level(level: LogLevel) {
-    LOGS.lock(|logs| logs.borrow_mut().set_level(level));
+/// Sets the log level for `connection`, if it is still the current one.
+pub fn set_log_level(connection: u32, level: LogLevel) {
+    if connection == CONNECTION.load(Ordering::Relaxed) {
+        LOGS.lock(|logs| logs.borrow_mut().set_level(level));
+    }
 }
 
-/// Queues a reply for the connection. Dropped if `tcp_tx` can't take it in
-/// time, as when the client has gone, so the `rig` task never stalls.
-pub async fn reply(reply: Payload) {
-    let _ = with_timeout(WRITE_TIMEOUT, REPLIES.send(reply)).await;
+fn logs_off() {
+    LOGS.lock(|logs| logs.borrow_mut().set_level(LogLevel::Off));
+}
+
+/// Queues a reply for `connection`. Dropped once another connection has
+/// replaced it, or if `tcp_tx` can't take it in time, as when the client
+/// has gone, so the `rig` task never stalls.
+pub async fn reply(connection: u32, mut reply: Payload) {
+    let _ = with_timeout(WRITE_TIMEOUT, async {
+        // Checked again after every wait for room: a new connection may
+        // have come in meanwhile.
+        while connection == CONNECTION.load(Ordering::Relaxed) {
+            match REPLIES.try_send(reply) {
+                Ok(()) => return,
+                Err(TrySendError::Full(full)) => reply = full,
+            }
+            poll_fn(|cx| REPLIES.poll_ready_to_send(cx)).await;
+        }
+    })
+    .await;
 }
 
 /// Brings up the radio and spawns the WiFi tasks. If the radio doesn't
@@ -131,7 +156,7 @@ async fn net(mut runner: Runner<'static, Interface>) {
 }
 
 /// Serves one connection at a time. A new connection starts with logs off
-/// and none of the last one's replies.
+/// and none of the earlier ones' replies.
 #[embassy_executor::task]
 async fn tcp(stack: Stack<'static>) {
     let mut rx_buffer = [0; 2 * 1024];
@@ -145,11 +170,12 @@ async fn tcp(stack: Stack<'static>) {
         socket.set_keep_alive(Some(KEEP_ALIVE));
         socket.set_timeout(Some(TIMEOUT));
         if socket.accept(PORT).await.is_ok() {
+            let connection = CONNECTION.fetch_add(1, Ordering::Relaxed).wrapping_add(1);
             REPLIES.clear();
-            set_log_level(LogLevel::Off);
+            logs_off();
             let (rx, tx) = socket.split();
-            select(tcp_rx(rx), tcp_tx(tx)).await;
-            set_log_level(LogLevel::Off);
+            select(tcp_rx(rx, connection), tcp_tx(tx)).await;
+            logs_off();
             socket.close();
             let _ = with_timeout(WRITE_TIMEOUT, socket.flush()).await;
         }
@@ -159,7 +185,7 @@ async fn tcp(stack: Stack<'static>) {
 }
 
 /// Turns the bytes from the client into queued requests, until it hangs up.
-async fn tcp_rx(mut rx: TcpReader<'_>) {
+async fn tcp_rx(mut rx: TcpReader<'_>, connection: u32) {
     let mut decoder = FrameDecoder::new();
     let mut bytes = [0; 256];
     loop {
@@ -169,7 +195,7 @@ async fn tcp_rx(mut rx: TcpReader<'_>) {
         };
         for &byte in &bytes[..read] {
             if let Some(frame) = decoder.push(byte) {
-                queue::receive(Transport::Tcp, frame, &REPLIES);
+                queue::receive(Transport::Tcp(connection), frame, &REPLIES);
             }
         }
     }
