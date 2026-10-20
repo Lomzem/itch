@@ -4,7 +4,7 @@ use common::TestRig;
 use itch_core::wire::{ErrorCode, Reply, Request, WriteChannels};
 
 fn write(mask: u16, values: u16) -> Request<'static> {
-    Request::WriteChannels(WriteChannels { mask, values })
+    Request::WriteChannels(WriteChannels { holder: "", mask, values })
 }
 
 fn expander_faults(rig: &mut TestRig) -> u32 {
@@ -52,7 +52,7 @@ fn an_expander_that_does_not_come_back_holds_every_channel_off() {
     rig.board.unreachable = true;
     rig.tick();
     assert_eq!(rig.refused(write(0x0001, 0x0001)), ErrorCode::HardwareFault);
-    assert_eq!(rig.refused(Request::Clear), ErrorCode::HardwareFault);
+    assert_eq!(rig.refused(Request::Clear { holder: "" }), ErrorCode::HardwareFault);
     assert_eq!(rig.ok(Request::GetChannels), Reply::GetChannels { state: 0 });
     assert!(!rig.settle);
 }

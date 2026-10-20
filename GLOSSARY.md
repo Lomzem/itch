@@ -48,6 +48,24 @@ _Avoid_: name, hostname, alias
 A Rig's fixed factory MAC address, also reported as its USB serial number (e.g. `60:55:F9:C0:27:18`).
 _Avoid_: serial, MAC, UID
 
+## Access
+
+**Transport**:
+How a client reaches a Rig: over USB, or over the network via the Rig's Wi-Fi. Every Transport carries the same protocol and allows the same control.
+_Avoid_: interface, link, connection type
+
+**Lock**:
+A Holder's hold on a Rig that stops anyone else changing it, while still letting anyone look at it; it lasts until the Holder releases it, someone takes it over, or the Rig resets.
+_Avoid_: lease, claim, reservation
+
+**Holder**:
+The name a Lock is held under (e.g. `alice@ws3`); a client using the same name can pick the Lock back up freely.
+_Avoid_: owner, client, session
+
+**Takeover**:
+Deliberately taking a Rig's Lock from its current Holder.
+_Avoid_: steal, force, override
+
 ## Semantics
 
 **Profile**:

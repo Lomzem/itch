@@ -6,6 +6,7 @@ mod sim_board;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -22,9 +23,19 @@ Serves a simulated Rig over TCP, by default on 127.0.0.1 with a free port.
 Once listening it prints one line: `itch-sim listening on tcp://HOST:PORT`.
 
 --hardware-fault simulates a Channel expander that never answers.
---storage-fault makes every label save fail with `StorageFault`.
+--storage-fault makes every settings save fail with `StorageFault`.
 
-The label lives in memory, so every run starts with the default label.";
+Like a Rig over Wi-Fi, it serves at most 4 connections at once and closes
+any more straight away.
+
+The label, Wi-Fi credentials and address configuration live in memory, so
+every run starts with the default label, no credentials and DHCP. With
+credentials, `GetStatus` reports the Wi-Fi link connected at the static
+address if one is set, otherwise at the address the sim listens on, or
+joining if that is 0.0.0.0 or IPv6.";
+
+/// The most connections served at once, as by a Rig over Wi-Fi.
+const MAX_CONNECTIONS: usize = 4;
 
 /// How often the Rig does its idle work.
 const TICK: Duration = Duration::from_millis(50);
@@ -63,19 +74,32 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    println!("itch-sim listening on tcp://{}", listener.local_addr().unwrap());
+    let bound = listener.local_addr().unwrap();
+    println!("itch-sim listening on tcp://{bound}");
     logs::init();
 
-    let mut board = SimBoard::new(hardware_fault, storage_fault);
+    let mut board = SimBoard::new(hardware_fault, storage_fault, bound);
     let sim = Sim { rig: Rig::new(&mut board), board };
     let sim = Arc::new(Mutex::new(sim));
     thread::spawn({
         let sim = Arc::clone(&sim);
         move || tick(&sim)
     });
+    let open = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming().flatten() {
+        if open.load(Ordering::Relaxed) == MAX_CONNECTIONS {
+            log::warn!("closed a connection: {MAX_CONNECTIONS} are already open");
+            continue;
+        }
+        open.fetch_add(1, Ordering::Relaxed);
         let sim = Arc::clone(&sim);
-        thread::spawn(move || serve(stream, &sim));
+        let open = Arc::clone(&open);
+        thread::spawn(move || {
+            serve(&stream, &sim);
+            // Before `stream` closes, so a client that sees it close can
+            // connect again at once.
+            open.fetch_sub(1, Ordering::Relaxed);
+        });
     }
     ExitCode::SUCCESS
 }
@@ -91,7 +115,7 @@ fn tick(sim: &Mutex<Sim>) {
 
 /// Serves one connection until it closes: its replies, and its Log Events
 /// from a second thread.
-fn serve(stream: TcpStream, sim: &Mutex<Sim>) {
+fn serve(stream: &TcpStream, sim: &Mutex<Sim>) {
     let peer = stream.peer_addr().map_or_else(|_| "a client".to_owned(), |addr| addr.to_string());
     log::info!("{peer} connected");
     let logs = ConnectionLogs::open();
@@ -104,7 +128,7 @@ fn serve(stream: TcpStream, sim: &Mutex<Sim>) {
     };
     thread::scope(|scope| {
         scope.spawn(|| send_logs(&logs, &writer));
-        if let Err(err) = answer(&stream, sim, &logs, &writer) {
+        if let Err(err) = answer(stream, sim, &logs, &writer) {
             log::warn!("{peer}: {err}");
         }
         logs.close();

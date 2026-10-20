@@ -38,14 +38,14 @@ espflash save-image --chip esp32s3 --flash-size 8mb \
 espflash write-bin 0x0 itch-firmware.bin    # flashes it; the label survives
 ```
 
-Rig firmware supports USB only ([ADR 0006](docs/adr/0006-usb-only-rig-firmware.md)). The same transport-independent protocol runs over TCP in `itch-sim` for development and integration tests.
+Rig firmware serves the protocol over two Transports at once: USB, and TCP port 7878 over Wi-Fi once the Rig has been given its network's credentials ([ADR 0008](docs/adr/0008-wifi-on-the-rig-network.md)). On the network, scripts find a Rig by its Label through mDNS, or connect to `tcp://<address>:7878`. Every build includes Wi-Fi; credentials are set at runtime, never compiled in. The same protocol runs over TCP in `itch-sim` for development and integration tests.
 
 ## Releases
 
 Each [release](https://github.com/Lomzem/itch/releases) attaches:
 
 - `itch-sim-linux-x86_64` and `itch-sim-windows-x86_64.exe`: prebuilt simulators, so you can write scripts without a Rig or a Rust toolchain;
-- `vectors-v<protocol>.json`: the conformance vectors for that release (the current source uses `vectors-v2.json`);
+- `vectors-v<protocol>.json`: the conformance vectors for that release (the current source uses `vectors-v3.json`);
 - `manifest.json`: the release's tag, commit, `protocol` and the SHA-256 of every other asset.
 
 To cut a release, set `version` in `Cargo.toml` and push a matching `vX.Y.Z` tag. The release workflow runs the tests, builds the sims and publishes the release. Tags never move.

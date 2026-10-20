@@ -64,14 +64,14 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - run: cp docs/protocol/vectors-v2.json dist/
+      - run: cp docs/protocol/vectors-v3.json dist/
       - name: Write the manifest
         run: |
           python3 - <<'EOF'
           import hashlib, json, os, pathlib
 
           dist = pathlib.Path("dist")
-          vectors = json.loads((dist / "vectors-v2.json").read_text(encoding="utf-8"))
+          vectors = json.loads((dist / "vectors-v3.json").read_text(encoding="utf-8"))
           manifest = {
               "tag": os.environ["GITHUB_REF_NAME"],
               "commit": os.environ["GITHUB_SHA"],

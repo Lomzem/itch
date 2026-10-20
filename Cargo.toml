@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/itch-core", "crates/itch-firmware", "crates/itch-sim"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 publish = false
 
@@ -18,3 +18,7 @@ inherits = "release"
 opt-level = "s"
 lto = "fat"
 codegen-units = 1
+
+# esp-radio is too slow for Wi-Fi at opt-level "s".
+[profile.firmware.package.esp-radio]
+opt-level = 3

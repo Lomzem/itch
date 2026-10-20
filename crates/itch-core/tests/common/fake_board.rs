@@ -1,5 +1,7 @@
-use itch_core::board::{Board, BoardInfo, Counters, HwFault, StorageFault};
+use itch_core::board::{Board, BoardInfo, Counters, HwFault, Network, StorageFault};
 use itch_core::label::Label;
+use itch_core::wifi::{Addressing, Credentials};
+use itch_core::wire::AddressMode;
 
 /// A Board for host tests. Its facts match the `hello-ok` vector.
 pub struct FakeBoard {
@@ -25,8 +27,20 @@ pub struct FakeBoard {
     pub stored: Option<String>,
     /// Every saved label, oldest first.
     pub saved: Vec<String>,
+    /// The Wi-Fi credentials in storage, loaded at boot, as SSID and
+    /// passphrase. `None` = none.
+    pub wifi: Option<(String, String)>,
+    /// Every saved set of Wi-Fi credentials, oldest first. `None` = cleared.
+    pub saved_wifi: Vec<Option<(String, String)>>,
+    /// The address configuration in storage, loaded at boot, as mode,
+    /// address, prefix and gateway.
+    pub addressing: (AddressMode, [u8; 4], u8, [u8; 4]),
+    /// Every saved address configuration, oldest first.
+    pub saved_addressing: Vec<(AddressMode, [u8; 4], u8, [u8; 4])>,
     /// Makes every save fail.
     pub storage_fault: bool,
+    /// The Wi-Fi link and address the board reports.
+    pub network: Network,
 }
 
 impl FakeBoard {
@@ -50,7 +64,12 @@ impl FakeBoard {
             counters: Counters::default(),
             stored: None,
             saved: Vec::new(),
+            wifi: None,
+            saved_wifi: Vec::new(),
+            addressing: (AddressMode::Dhcp, [0; 4], 0, [0; 4]),
+            saved_addressing: Vec::new(),
             storage_fault: false,
+            network: Network::default(),
         }
     }
 
@@ -109,5 +128,38 @@ impl Board for FakeBoard {
         self.stored = Some(label.into());
         self.saved.push(label.into());
         Ok(())
+    }
+
+    fn load_wifi(&mut self) -> Option<Credentials> {
+        let (ssid, passphrase) = self.wifi.as_ref()?;
+        Credentials::new(ssid, passphrase)
+    }
+
+    fn save_wifi(&mut self, wifi: Option<&Credentials>) -> Result<(), StorageFault> {
+        if self.storage_fault {
+            return Err(StorageFault);
+        }
+        self.wifi = wifi.map(|wifi| (wifi.ssid().into(), wifi.passphrase().into()));
+        self.saved_wifi.push(self.wifi.clone());
+        Ok(())
+    }
+
+    fn load_addressing(&mut self) -> Addressing {
+        let (mode, address, prefix, gateway) = self.addressing;
+        Addressing::new(mode, address, prefix, gateway).expect("a valid address configuration")
+    }
+
+    fn save_addressing(&mut self, addressing: &Addressing) -> Result<(), StorageFault> {
+        if self.storage_fault {
+            return Err(StorageFault);
+        }
+        self.addressing =
+            (addressing.mode(), addressing.address(), addressing.prefix(), addressing.gateway());
+        self.saved_addressing.push(self.addressing);
+        Ok(())
+    }
+
+    fn network(&self) -> Network {
+        self.network
     }
 }

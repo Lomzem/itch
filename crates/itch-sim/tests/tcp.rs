@@ -1,20 +1,20 @@
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{Shutdown, TcpStream};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
+use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::SETTLE_MS;
 use itch_core::wire::{
-    ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request, Response, SetLabel,
-    StatusReply, WriteChannels,
+    AddressMode, ErrorCode, Event, HelloReply, Link, Lock, LogEvent, LogLevel, Message, Reply,
+    Request, Response, SetAddress, SetLabel, SetWifi, StatusReply, WriteChannels,
 };
 
 #[test]
 fn answers_hello_over_tcp() {
     let sim = Sim::start();
     let hello = hello(&mut sim.connect(), 7);
-    assert_eq!(hello.protocol, 2);
+    assert_eq!(hello.protocol, 3);
     assert_eq!(hello.channel_count, 16);
     assert_eq!(hello.board_revision, "sim");
     assert!(hello.label.starts_with("itch-"), "{}", hello.label);
@@ -29,7 +29,7 @@ fn channel_state_survives_disconnects_and_is_shared_between_clients() {
         exchange(
             &mut first,
             1,
-            Request::WriteChannels(WriteChannels { mask: 0x0001, values: 0x0001 }),
+            Request::WriteChannels(WriteChannels { holder: "", mask: 0x0001, values: 0x0001 }),
         ),
         Response::Ok(Reply::WriteChannels { state: 0x0001 })
     );
@@ -37,7 +37,7 @@ fn channel_state_survives_disconnects_and_is_shared_between_clients() {
         exchange(
             &mut other,
             1,
-            Request::WriteChannels(WriteChannels { mask: 0x8000, values: 0x8000 }),
+            Request::WriteChannels(WriteChannels { holder: "", mask: 0x8000, values: 0x8000 }),
         ),
         Response::Ok(Reply::WriteChannels { state: 0x8001 })
     );
@@ -58,13 +58,35 @@ fn channel_state_survives_disconnects_and_is_shared_between_clients() {
         Response::Ok(Reply::GetChannels { state: 0x8001 })
     );
     assert_eq!(
-        exchange(&mut reconnected, 2, Request::Clear),
+        exchange(&mut reconnected, 2, Request::Clear { holder: "" }),
         Response::Ok(Reply::Clear { state: 0 })
     );
     assert_eq!(
         exchange(&mut sim.connect(), 1, Request::GetChannels),
         Response::Ok(Reply::GetChannels { state: 0 })
     );
+}
+
+#[test]
+fn a_fifth_connection_is_closed_at_once_until_another_ends() {
+    let sim = Sim::start();
+    let mut open: Vec<TcpStream> = (0..4).map(|_| sim.connect()).collect();
+    for (request_id, stream) in (1..).zip(&mut open) {
+        hello(stream, request_id);
+    }
+
+    let mut fifth = sim.connect();
+    // The sim may close it before or after this write arrives.
+    let _ = fifth.write_all(&request(5, Request::Hello));
+    match fifth.read(&mut [0; MAX_FRAME]) {
+        Ok(0) => {}
+        Err(err)
+            if matches!(err.kind(), ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted) => {}
+        other => panic!("the fifth connection was served: {other:?}"),
+    }
+
+    disconnect(open.pop().unwrap());
+    hello(&mut sim.connect(), 6);
 }
 
 #[test]
@@ -105,7 +127,7 @@ fn sends_no_logs_by_default() {
 fn a_write_replies_after_the_contacts_settle() {
     let sim = Sim::start();
     let mut stream = sim.connect();
-    let write = WriteChannels { mask: 0x8001, values: 0x8001 };
+    let write = WriteChannels { holder: "", mask: 0x8001, values: 0x8001 };
     let started = Instant::now();
     let reply = exchange(&mut stream, 3, Request::WriteChannels(write));
     assert!(started.elapsed() >= Duration::from_millis(SETTLE_MS));
@@ -142,6 +164,15 @@ fn status_counts_bad_frames_from_every_connection() {
             dropped_logs: 0,
             expander_faults: 0,
             usb_tx_dropped: 0,
+            holder: "",
+            wifi_configured: false,
+            ssid: "",
+            link: Link::Off,
+            current_address: [0; 4],
+            mode: AddressMode::Dhcp,
+            address: [0; 4],
+            prefix: 0,
+            gateway: [0; 4],
         }
     );
 }
@@ -150,7 +181,7 @@ fn status_counts_bad_frames_from_every_connection() {
 fn a_hardware_fault_holds_every_channel_off_and_refuses_writes() {
     let sim = Sim::start_with(&["--hardware-fault"]);
     let mut stream = sim.connect();
-    let write = WriteChannels { mask: 0x8001, values: 0x8001 };
+    let write = WriteChannels { holder: "", mask: 0x8001, values: 0x8001 };
     let reply = exchange(&mut stream, 1, Request::WriteChannels(write));
     assert!(matches!(reply, Response::Err { error: ErrorCode::HardwareFault, .. }), "{reply:?}");
     let reply = exchange(&mut stream, 2, Request::GetChannels);
@@ -178,7 +209,7 @@ fn a_hardware_fault_is_found_by_the_idle_tick() {
 #[test]
 fn a_label_lasts_for_the_run_unless_storage_faults() {
     let sim = Sim::start();
-    let set = |label| Request::SetLabel(SetLabel { label });
+    let set = |label| Request::SetLabel(SetLabel { holder: "", label });
     exchange(&mut sim.connect(), 1, set("bench3"));
     assert_eq!(hello(&mut sim.connect(), 2).label, "bench3");
 
@@ -187,6 +218,199 @@ fn a_label_lasts_for_the_run_unless_storage_faults() {
         panic!("the label was saved");
     };
     assert_eq!(error, ErrorCode::StorageFault);
+}
+
+#[test]
+fn a_lock_keeps_other_connections_from_changing_the_rig_until_taken_over() {
+    let sim = Sim::start();
+    let mut alice = sim.connect();
+    let mut bob = sim.connect();
+    let write =
+        |holder, values| Request::WriteChannels(WriteChannels { holder, mask: 0x0003, values });
+    let lock = |holder, takeover| Request::Lock(Lock { holder, takeover });
+    let locked = |detail| Response::Err { request_type: 0x03, error: ErrorCode::Locked, detail };
+
+    assert_eq!(exchange(&mut alice, 1, lock("alice", false)), Response::Ok(Reply::Lock));
+    assert_eq!(exchange(&mut bob, 1, write("bob", 0x0002)), locked("alice"));
+    assert_eq!(exchange(&mut bob, 2, lock("bob", true)), Response::Ok(Reply::Lock));
+    assert_eq!(exchange(&mut alice, 2, write("alice", 0x0001)), locked("bob"));
+    let release = Request::ReleaseLock { holder: "bob" };
+    assert_eq!(exchange(&mut bob, 3, release), Response::Ok(Reply::ReleaseLock));
+    assert_eq!(
+        exchange(&mut alice, 3, write("alice", 0x0001)),
+        Response::Ok(Reply::WriteChannels { state: 0x0001 })
+    );
+}
+
+const SSID: &str = "ExampleRigNet";
+
+fn set_wifi<'a>(holder: &'a str, ssid: &'a str, passphrase: &'a str) -> Request<'a> {
+    Request::SetWifi(SetWifi { holder, ssid, passphrase })
+}
+
+/// What `GetStatus` reports of the network: credentials, SSID, link and
+/// current address.
+fn network(stream: &mut TcpStream) -> (bool, &'static str, Link, [u8; 4]) {
+    match exchange(stream, 9, Request::GetStatus) {
+        Response::Ok(Reply::GetStatus(status)) => {
+            (status.wifi_configured, status.ssid, status.link, status.current_address)
+        }
+        other => panic!("not a GetStatus reply: {other:?}"),
+    }
+}
+
+#[test]
+fn wifi_credentials_last_for_the_run_and_connect_at_the_bound_address() {
+    let sim = Sim::start();
+    let off = (false, "", Link::Off, [0; 4]);
+    assert_eq!(network(&mut sim.connect()), off);
+
+    let set = set_wifi("", SSID, "example-passphrase");
+    assert_eq!(exchange(&mut sim.connect(), 1, set), Response::Ok(Reply::SetWifi));
+    assert_eq!(network(&mut sim.connect()), (true, SSID, Link::Connected, [127, 0, 0, 1]));
+
+    assert_eq!(exchange(&mut sim.connect(), 2, set_wifi("", "", "")), Response::Ok(Reply::SetWifi));
+    assert_eq!(network(&mut sim.connect()), off);
+}
+
+/// Bound to every address, the sim has no one address to report, so it is
+/// like a Rig still waiting for its DHCP lease.
+#[test]
+fn a_sim_bound_to_no_one_address_reports_joining_with_dhcp() {
+    let sim = Sim::start_with(&["--bind", "0.0.0.0:0"]);
+    let set = set_wifi("", SSID, "example-passphrase");
+    assert_eq!(exchange(&mut sim.connect(), 1, set), Response::Ok(Reply::SetWifi));
+    assert_eq!(network(&mut sim.connect()), (true, SSID, Link::Joining, [0; 4]));
+}
+
+#[test]
+fn wifi_credentials_out_of_range_are_malformed() {
+    let sim = Sim::start();
+    let mut stream = sim.connect();
+    for (ssid, passphrase) in [(SSID, "short"), ("", "example-passphrase")] {
+        let Response::Err { error, .. } = exchange(&mut stream, 1, set_wifi("", ssid, passphrase))
+        else {
+            panic!("{ssid:?} with {passphrase:?} was accepted");
+        };
+        assert_eq!(error, ErrorCode::Malformed);
+    }
+    assert_eq!(network(&mut stream), (false, "", Link::Off, [0; 4]));
+}
+
+#[test]
+fn wifi_credentials_are_refused_on_a_storage_fault_or_by_the_lock() {
+    let faulty = Sim::start_with(&["--storage-fault"]);
+    let mut stream = faulty.connect();
+    let Response::Err { error, .. } =
+        exchange(&mut stream, 1, set_wifi("", SSID, "example-passphrase"))
+    else {
+        panic!("the credentials were saved");
+    };
+    assert_eq!(error, ErrorCode::StorageFault);
+    assert!(!network(&mut stream).0);
+
+    let sim = Sim::start();
+    let mut alice = sim.connect();
+    let lock = Request::Lock(Lock { holder: "alice", takeover: false });
+    assert_eq!(exchange(&mut alice, 1, lock), Response::Ok(Reply::Lock));
+    assert_eq!(
+        exchange(&mut sim.connect(), 1, set_wifi("bob", SSID, "example-passphrase")),
+        Response::Err { request_type: 0x0D, error: ErrorCode::Locked, detail: "alice" }
+    );
+    assert!(!network(&mut alice).0);
+}
+
+/// A made-up static address from the documentation range.
+const STATIC: [u8; 4] = [192, 0, 2, 10];
+const GATEWAY: [u8; 4] = [192, 0, 2, 1];
+
+fn set_address(
+    holder: &str,
+    mode: AddressMode,
+    address: [u8; 4],
+    prefix: u8,
+    gateway: [u8; 4],
+) -> Request<'_> {
+    Request::SetAddress(SetAddress { holder, mode, address, prefix, gateway })
+}
+
+fn set_static(holder: &str) -> Request<'_> {
+    set_address(holder, AddressMode::Static, STATIC, 24, GATEWAY)
+}
+
+fn set_dhcp() -> Request<'static> {
+    set_address("", AddressMode::Dhcp, [0; 4], 0, [0; 4])
+}
+
+/// An address configuration as `GetStatus` reports it: mode, address,
+/// prefix and gateway.
+type Addressing = (AddressMode, [u8; 4], u8, [u8; 4]);
+
+/// What `GetStatus` reports of the address: the configuration, and the
+/// address the Rig has.
+fn addressing(stream: &mut TcpStream) -> (Addressing, [u8; 4]) {
+    match exchange(stream, 9, Request::GetStatus) {
+        Response::Ok(Reply::GetStatus(status)) => {
+            ((status.mode, status.address, status.prefix, status.gateway), status.current_address)
+        }
+        other => panic!("not a GetStatus reply: {other:?}"),
+    }
+}
+
+#[test]
+fn a_static_address_lasts_for_the_run_and_is_the_address_the_sim_reports() {
+    let sim = Sim::start();
+    let dhcp = (AddressMode::Dhcp, [0; 4], 0, [0; 4]);
+    let configured = (AddressMode::Static, STATIC, 24, GATEWAY);
+    assert_eq!(addressing(&mut sim.connect()), (dhcp, [0; 4]));
+
+    assert_eq!(exchange(&mut sim.connect(), 1, set_static("")), Response::Ok(Reply::SetAddress));
+    // Static but not connected: no credentials yet.
+    assert_eq!(addressing(&mut sim.connect()), (configured, [0; 4]));
+
+    exchange(&mut sim.connect(), 2, set_wifi("", SSID, "example-passphrase"));
+    assert_eq!(addressing(&mut sim.connect()), (configured, STATIC));
+
+    assert_eq!(exchange(&mut sim.connect(), 3, set_dhcp()), Response::Ok(Reply::SetAddress));
+    assert_eq!(addressing(&mut sim.connect()), (dhcp, [127, 0, 0, 1]));
+}
+
+#[test]
+fn an_address_out_of_range_is_malformed() {
+    let sim = Sim::start();
+    let mut stream = sim.connect();
+    for request in [
+        set_address("", AddressMode::Static, STATIC, 33, GATEWAY),
+        set_address("", AddressMode::Static, [0; 4], 24, GATEWAY),
+        set_address("", AddressMode::Dhcp, STATIC, 0, [0; 4]),
+    ] {
+        let Response::Err { error, .. } = exchange(&mut stream, 1, request) else {
+            panic!("{request:?} was accepted");
+        };
+        assert_eq!(error, ErrorCode::Malformed);
+    }
+    assert_eq!(addressing(&mut stream).0.0, AddressMode::Dhcp);
+}
+
+#[test]
+fn an_address_is_refused_on_a_storage_fault_or_by_the_lock() {
+    let faulty = Sim::start_with(&["--storage-fault"]);
+    let mut stream = faulty.connect();
+    let Response::Err { error, .. } = exchange(&mut stream, 1, set_static("")) else {
+        panic!("the address was saved");
+    };
+    assert_eq!(error, ErrorCode::StorageFault);
+    assert_eq!(addressing(&mut stream).0.0, AddressMode::Dhcp);
+
+    let sim = Sim::start();
+    let mut alice = sim.connect();
+    let lock = Request::Lock(Lock { holder: "alice", takeover: false });
+    assert_eq!(exchange(&mut alice, 1, lock), Response::Ok(Reply::Lock));
+    assert_eq!(
+        exchange(&mut sim.connect(), 1, set_static("bob")),
+        Response::Err { request_type: 0x0E, error: ErrorCode::Locked, detail: "alice" }
+    );
+    assert_eq!(addressing(&mut alice).0.0, AddressMode::Dhcp);
 }
 
 struct Sim {
@@ -212,7 +436,12 @@ impl Sim {
     }
 
     fn connect(&self) -> TcpStream {
-        let stream = TcpStream::connect(self.url.strip_prefix("tcp://").unwrap()).unwrap();
+        let mut addr: SocketAddr = self.url.strip_prefix("tcp://").unwrap().parse().unwrap();
+        // Windows refuses to connect to 0.0.0.0, which other systems take as this host.
+        if addr.ip().is_unspecified() {
+            addr.set_ip(Ipv4Addr::LOCALHOST.into());
+        }
+        let stream = TcpStream::connect(addr).unwrap();
         stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         stream
     }

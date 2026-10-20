@@ -12,7 +12,7 @@ fn hello_reports_the_rig_identity_and_default_label() {
         Ok(Message::Response {
             request_id: 0x1234_5678,
             response: Response::Ok(Reply::Hello(HelloReply {
-                protocol: 2,
+                protocol: 3,
                 firmware_version: "1.0.0",
                 dirty: false,
                 channel_count: 16,

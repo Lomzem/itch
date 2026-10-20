@@ -11,10 +11,16 @@ Each message lists its request body and its ok result body. The header (`type`, 
 | `0x05` | [`GetStatus`](#getstatus) |
 | `0x06` | [`SetLabel`](#setlabel) |
 | `0x07` | [`SetLogLevel`](#setloglevel) |
+| `0x0B` | [`Lock`](#lock) |
+| `0x0C` | [`ReleaseLock`](#releaselock) |
+| `0x0D` | [`SetWifi`](#setwifi) |
+| `0x0E` | [`SetAddress`](#setaddress) |
 
 | Type | Event |
 | --- | --- |
 | `0x40` | [`Log`](#log) |
+
+Types `0x08` to `0x0A` belonged to protocol 1 and are unused.
 
 Channel states are a `u16` with bit 0 = CH1 and bit 15 = CH16. A set bit means on (contact closed).
 
@@ -30,7 +36,7 @@ Result body:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `protocol` | `u16` | 2 |
+| `protocol` | `u16` | 3 |
 | `firmware_version` | `text` | For example `1.0.0` |
 | `dirty` | `bool` | Built from uncommitted code |
 | `channel_count` | `u8` | 16 |
@@ -50,7 +56,7 @@ Reply from Rig `60:55:F9:C0:27:18`, firmware `1.0.0`, clean, board revision `A`,
 
 ```hex
 81 78 56 34 12 00
-02 00
+03 00
 05 31 2e 30 2e 30
 00
 10
@@ -86,12 +92,13 @@ Reply with CH1 and CH16 on:
 
 ## WriteChannels
 
-`0x03`. A Mask write: each Channel whose `mask` bit is set takes its `values` bit, and every other Channel stays as it was. The reply goes out once the contacts have settled. While the expander is held in reset it is refused with `HardwareFault`.
+`0x03`. A Mask write: each Channel whose `mask` bit is set takes its `values` bit, and every other Channel stays as it was. The reply goes out once the contacts have settled. While the expander is held in reset it is refused with `HardwareFault`. On a Rig Locked by someone else it is refused with `Locked` (see [Locks](README.md#locks)).
 
 Request body:
 
 | Field | Type | Notes |
 | --- | --- | --- |
+| `holder` | `text` | At most 64 bytes. Empty = no Holder. See [Locks](README.md#locks) |
 | `mask` | `u16` | The Channels to change |
 | `values` | `u16` | Their new states. Bits outside `mask` are ignored |
 
@@ -101,10 +108,20 @@ Result body:
 | --- | --- | --- |
 | `state` | `u16` | The state after settling |
 
-Request turning CH1 on and CH3 off:
+Request from Holder `alice@ws3` turning CH1 on and CH3 off:
 
 ```hex
 03 78 56 34 12
+09 61 6c 69 63 65 40 77 73 33
+05 00
+01 00
+```
+
+The same request with no Holder:
+
+```hex
+03 78 56 34 12
+00
 05 00
 01 00
 ```
@@ -116,11 +133,22 @@ Reply, with CH16 already on:
 01 80
 ```
 
+Refused with `Locked` on a Rig held by `bob@ws7`:
+
+```hex
+83 78 56 34 12 0b
+07 62 6f 62 40 77 73 37
+```
+
 ## Clear
 
-`0x04`. Turns every Channel off. The reply goes out once the contacts have settled. While the expander is held in reset it is refused with `HardwareFault`.
+`0x04`. Turns every Channel off. The reply goes out once the contacts have settled. While the expander is held in reset it is refused with `HardwareFault`. On a Rig Locked by someone else it is refused with `Locked` (see [Locks](README.md#locks)).
 
-Request body: empty.
+Request body:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `holder` | `text` | At most 64 bytes. Empty = no Holder. See [Locks](README.md#locks) |
 
 Result body:
 
@@ -128,10 +156,11 @@ Result body:
 | --- | --- | --- |
 | `state` | `u16` | The state after settling, always 0 |
 
-Request:
+Request from Holder `alice@ws3`:
 
 ```hex
 04 78 56 34 12
+09 61 6c 69 63 65 40 77 73 33
 ```
 
 Reply:
@@ -143,7 +172,7 @@ Reply:
 
 ## GetStatus
 
-`0x05`. Reports the Rig's health since boot.
+`0x05`. Reports the Rig's health since boot, who holds its Lock, its Wi-Fi network and its address. It never reports the Wi-Fi passphrase.
 
 Request body: empty.
 
@@ -160,6 +189,17 @@ Result body:
 | `dropped_logs` | `u32` | |
 | `expander_faults` | `u32` | |
 | `usb_tx_dropped` | `u32` | |
+| `holder` | `text` | Who holds the Lock. Empty = unlocked |
+| `wifi_configured` | `bool` | The Rig has Wi-Fi credentials |
+| `ssid` | `text` | The network the credentials are for. At most 32 bytes. Empty exactly when `wifi_configured` is 0 |
+| `link` | `u8` | The Wi-Fi link: 0 off (no credentials, or the radio is off), 1 joining, 2 connected. Always 0 when `wifi_configured` is 0. Anything higher is `Malformed` |
+| `current_address` | `[u8; 4]` | The Rig's IPv4 address on the network, in network order (`c0 00 02 0a` is `192.0.2.10`). Non-zero when connected, zero otherwise |
+| `mode` | `u8` | How the Rig is set to take its address, whether or not it is connected: 0 DHCP, 1 static. Anything higher is `Malformed` |
+| `address` | `[u8; 4]` | The static address. Zero for DHCP |
+| `prefix` | `u8` | The static prefix length. Zero for DHCP |
+| `gateway` | `[u8; 4]` | The static gateway. Zero for DHCP or no gateway |
+
+A reply whose fields break these rules, such as DHCP with a non-zero `address` or a joining `link` with a non-zero `current_address`, is `Malformed`. `mode`, `address`, `prefix` and `gateway` follow the rules of [`SetAddress`](#setaddress).
 
 The counters are described in [`errors.md`](errors.md#counters). Each counts since boot and wraps at 2^32.
 
@@ -169,7 +209,7 @@ Request:
 05 78 56 34 12
 ```
 
-Reply from a Rig up for 1 h 2 min 3 s after a software reset, whose previous boot panicked at `src/main.rs:88:5`, with counters 1 to 6 in order:
+Reply from a Rig up for 1 h 2 min 3 s after a software reset, whose previous boot panicked at `src/main.rs:88:5`, with counters 1 to 6 in order, Locked by `alice@ws3`, connected to the network `ExampleRigNet` at its static address `192.0.2.10/24` with gateway `192.0.2.1`:
 
 ```hex
 85 78 56 34 12 00
@@ -182,16 +222,26 @@ f8 ce 38 00 00 00 00 00
 04 00 00 00
 05 00 00 00
 06 00 00 00
+09 61 6c 69 63 65 40 77 73 33
+01
+0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74
+02
+c0 00 02 0a
+01
+c0 00 02 0a
+18
+c0 00 02 01
 ```
 
 ## SetLabel
 
-`0x06`. Renames the Rig. The Rig saves the label before it replies, so the reply means the label survives a reboot. An empty label, or the default label by name, restores the default `itch-` plus the last three Hardware ID bytes in uppercase hex, such as `itch-C02718`. The default is never saved. A failed save gets `StorageFault` and keeps the old label.
+`0x06`. Renames the Rig. The Rig saves the label before it replies, so the reply means the label survives a reboot. An empty label, or the default label by name, restores the default `itch-` plus the last three Hardware ID bytes in uppercase hex, such as `itch-C02718`. The default is never saved. A failed save gets `StorageFault` and keeps the old label. On a Rig Locked by someone else it is refused with `Locked` (see [Locks](README.md#locks)).
 
 Request body:
 
 | Field | Type | Notes |
 | --- | --- | --- |
+| `holder` | `text` | At most 64 bytes. Empty = no Holder. See [Locks](README.md#locks) |
 | `label` | `text` | At most 64 bytes. Empty = restore the default |
 
 Result body:
@@ -200,10 +250,11 @@ Result body:
 | --- | --- | --- |
 | `label` | `text` | The label the Rig now reports, as in `Hello` |
 
-Request to rename the Rig `bench3`:
+Request from Holder `alice@ws3` to rename the Rig `bench3`:
 
 ```hex
 06 78 56 34 12
+09 61 6c 69 63 65 40 77 73 33
 06 62 65 6e 63 68 33
 ```
 
@@ -214,10 +265,11 @@ Reply:
 06 62 65 6e 63 68 33
 ```
 
-Request to restore the default:
+Request with no Holder to restore the default:
 
 ```hex
 06 78 56 34 12
+00
 00
 ```
 
@@ -257,6 +309,171 @@ Reply:
 
 ```hex
 87 78 56 34 12 00
+```
+
+## Lock
+
+`0x0B`. Locks the Rig under `holder`, so that only requests carrying it may change the Rig (see [Locks](README.md#locks)). Locking an unlocked Rig, or Locking again under the current Holder, succeeds. On a Rig Locked by someone else it is refused with `Locked`, whose `detail` names the Holder, unless `takeover` is set: then the Lock passes to `holder`. Never changes the Channels.
+
+Request body:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `holder` | `text` | 1 to 64 bytes. Empty gets `Malformed` |
+| `takeover` | `bool` | Take the Lock from another Holder |
+
+Result body: empty.
+
+Request from `alice@ws3`:
+
+```hex
+0b 78 56 34 12
+09 61 6c 69 63 65 40 77 73 33
+00
+```
+
+Request from `bob@ws7` to take the Lock over:
+
+```hex
+0b 78 56 34 12
+07 62 6f 62 40 77 73 37
+01
+```
+
+Reply:
+
+```hex
+8b 78 56 34 12 00
+```
+
+Refused with `Locked` on a Rig held by `alice@ws3`:
+
+```hex
+8b 78 56 34 12 0b
+09 61 6c 69 63 65 40 77 73 33
+```
+
+## ReleaseLock
+
+`0x0C`. Unlocks the Rig if `holder` holds its Lock. Anyone else is refused with `Locked`, whose `detail` names the Holder. Releasing an unlocked Rig succeeds and changes nothing. Never changes the Channels.
+
+Request body:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `holder` | `text` | At most 64 bytes |
+
+Result body: empty.
+
+Request from `alice@ws3`:
+
+```hex
+0c 78 56 34 12
+09 61 6c 69 63 65 40 77 73 33
+```
+
+Reply:
+
+```hex
+8c 78 56 34 12 00
+```
+
+## SetWifi
+
+`0x0D`. Gives the Rig the Wi-Fi network to join, as an SSID and its WPA2-Personal passphrase, or clears them with an empty SSID and passphrase. The Rig saves the credentials before it replies, so the reply means they survive a reboot; it keeps its label and every other setting. A failed save gets `StorageFault` and keeps the old credentials. The Rig then applies them: it leaves its current network and joins the new one, so a change made over Wi-Fi drops that connection after the reply. A Rig with no credentials keeps its radio off and works over USB alone. `GetStatus` reports the SSID, but never the passphrase. On a Rig Locked by someone else it is refused with `Locked` (see [Locks](README.md#locks)).
+
+Request body:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `holder` | `text` | At most 64 bytes. Empty = no Holder. See [Locks](README.md#locks) |
+| `ssid` | `text` | 1 to 32 bytes. Empty = clear the credentials |
+| `passphrase` | `text` | 8 to 63 bytes, or empty with an empty `ssid`. Anything else is `Malformed` |
+
+Result body: empty.
+
+Request from Holder `alice@ws3` to join `ExampleRigNet` with passphrase `example-passphrase`:
+
+```hex
+0d 78 56 34 12
+09 61 6c 69 63 65 40 77 73 33
+0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74
+12 65 78 61 6d 70 6c 65 2d 70 61 73 73 70 68 72 61 73 65
+```
+
+Request with no Holder to clear the credentials:
+
+```hex
+0d 78 56 34 12
+00
+00
+00
+```
+
+Reply:
+
+```hex
+8d 78 56 34 12 00
+```
+
+Refused with `StorageFault`:
+
+```hex
+8d 78 56 34 12 09
+00
+```
+
+## SetAddress
+
+`0x0E`. Sets how the Rig takes its IPv4 address on the network: by DHCP, the default, or a static address, prefix length and optional gateway. It leaves the Wi-Fi credentials alone, so re-addressing a Rig never needs the passphrase. The Rig saves the configuration before it replies, so the reply means it survives a reboot; it keeps its label and every other setting. A failed save gets `StorageFault` and keeps the old configuration. The Rig then applies it, straight away if it is connected and otherwise when it next joins, so a change made over Wi-Fi may drop that connection after the reply. The Rig uses exactly the address given: it checks for no conflict and never falls back to DHCP. It has no DNS servers, since it never resolves names or opens connections. A mis-addressed Rig is fixed over USB (see [Transports](README.md#transports)). On a Rig Locked by someone else it is refused with `Locked` (see [Locks](README.md#locks)).
+
+Request body:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `holder` | `text` | At most 64 bytes. Empty = no Holder. See [Locks](README.md#locks) |
+| `mode` | `u8` | 0 DHCP, 1 static. Anything higher is `Malformed` |
+| `address` | `[u8; 4]` | Static: a unicast address, so not zero, not `255.255.255.255` and not multicast (`224.0.0.0` to `239.255.255.255`). DHCP: zero |
+| `prefix` | `u8` | Static: 1 to 32. DHCP: zero |
+| `gateway` | `[u8; 4]` | Static: zero = no gateway, otherwise a unicast address as for `address`. DHCP: zero |
+
+Anything else, such as DHCP with a non-zero field or a multicast static address, is `Malformed`. `GetStatus` reports the configuration as `mode`, `address`, `prefix` and `gateway`, beside the `current_address` the Rig has.
+
+Result body: empty.
+
+Request from Holder `alice@ws3` for the static address `192.0.2.10/24` with gateway `192.0.2.1`:
+
+```hex
+0e 78 56 34 12
+09 61 6c 69 63 65 40 77 73 33
+01
+c0 00 02 0a
+18
+c0 00 02 01
+```
+
+Request with no Holder to go back to DHCP:
+
+```hex
+0e 78 56 34 12
+00
+00
+00 00 00 00
+00
+00 00 00 00
+```
+
+Reply:
+
+```hex
+8e 78 56 34 12 00
+```
+
+Refused with `StorageFault`:
+
+```hex
+8e 78 56 34 12 09
+00
 ```
 
 ## Log

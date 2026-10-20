@@ -1,8 +1,10 @@
-use crate::board::{Board, StorageFault};
+use crate::board::{Board, Network, StorageFault};
 use crate::frame::{FrameError, MAX_PAYLOAD};
+use crate::holder::Holder;
 use crate::label::Label;
+use crate::wifi::{Addressing, Credentials};
 use crate::wire::{
-    CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, LogLevel, PROTOCOL, Reply, Request,
+    CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, Lock, LogLevel, PROTOCOL, Reply, Request,
     StatusReply, decode_request,
 };
 
@@ -33,6 +35,13 @@ pub trait LogControl {
 pub struct Rig {
     /// The label `Hello` reports.
     label: Label,
+    /// The Wi-Fi credentials saved. `None` = none.
+    wifi: Option<Credentials>,
+    /// How the Rig is set to take its IPv4 address.
+    addressing: Addressing,
+    /// Who holds the Lock. `None` = unlocked. Never persisted, so a reset
+    /// unlocks the Rig.
+    holder: Option<Holder>,
     /// The commanded Channel state, bit 0 = CH1.
     channels: u16,
     /// Frames dropped for a bad CRC, truncated COBS or a wrong length.
@@ -55,8 +64,13 @@ impl Rig {
             .load_label()
             .filter(|label| !label.as_str().is_empty())
             .unwrap_or_else(|| Label::default_for(board.info().hardware_id));
+        let wifi = board.load_wifi();
+        let addressing = board.load_addressing();
         Self {
             label,
+            wifi,
+            addressing,
+            holder: None,
             channels: 0,
             crc_failures: 0,
             oversized_frames: 0,
@@ -113,6 +127,7 @@ impl Rig {
         let settle = matches!(result, Ok(Reply::WriteChannels { .. } | Reply::Clear { .. }));
         let response = match result {
             Ok(reply) => header.reply(reply),
+            Err(ErrorCode::Locked) => header.error(ErrorCode::Locked, self.holder()),
             Err(error) => header.error(error, ""),
         };
         Handled::Reply { len: response.encode(reply), settle }
@@ -152,6 +167,12 @@ impl Rig {
             Request::GetStatus => {
                 let info = board.info();
                 let counters = board.counters();
+                // Without credentials the link is off, even while the radio
+                // takes a moment to leave the network it was on.
+                let network = match self.wifi {
+                    Some(_) => board.network(),
+                    None => Network::default(),
+                };
                 Reply::GetStatus(StatusReply {
                     uptime_ms: board.now(),
                     reset_reason: info.reset_reason,
@@ -162,18 +183,89 @@ impl Rig {
                     dropped_logs: counters.dropped_logs,
                     expander_faults: self.expander_faults,
                     usb_tx_dropped: counters.usb_tx_dropped,
+                    holder: self.holder(),
+                    wifi_configured: self.wifi.is_some(),
+                    ssid: self.wifi.as_ref().map_or("", Credentials::ssid),
+                    link: network.link,
+                    current_address: network.address,
+                    mode: self.addressing.mode(),
+                    address: self.addressing.address(),
+                    prefix: self.addressing.prefix(),
+                    gateway: self.addressing.gateway(),
                 })
             }
             Request::WriteChannels(write) => {
+                self.check_lock(write.holder)?;
                 let state = self.channels & !write.mask | write.values & write.mask;
                 Reply::WriteChannels { state: self.write(board, state)? }
             }
-            Request::Clear => Reply::Clear { state: self.write(board, 0)? },
+            Request::Clear { holder } => {
+                self.check_lock(holder)?;
+                Reply::Clear { state: self.write(board, 0)? }
+            }
             Request::SetLabel(set) => {
+                self.check_lock(set.holder)?;
                 self.set_label(board, set.label)?;
                 Reply::SetLabel { label: self.label.as_str() }
             }
+            Request::SetWifi(set) => {
+                self.check_lock(set.holder)?;
+                self.set_wifi(board, set.credentials())?;
+                Reply::SetWifi
+            }
+            Request::SetAddress(set) => {
+                self.check_lock(set.holder)?;
+                let addressing = set.addressing().ok_or(ErrorCode::Malformed)?;
+                self.set_addressing(board, addressing)?;
+                Reply::SetAddress
+            }
+            Request::Lock(lock) => {
+                self.lock(lock)?;
+                Reply::Lock
+            }
+            Request::ReleaseLock { holder } => {
+                self.release_lock(holder)?;
+                Reply::ReleaseLock
+            }
         })
+    }
+
+    /// The current Holder. Empty = unlocked.
+    fn holder(&self) -> &str {
+        self.holder.as_ref().map_or("", Holder::as_str)
+    }
+
+    /// Refuses a change from `holder` while someone else holds the Lock.
+    fn check_lock(&self, holder: &str) -> Result<(), ErrorCode> {
+        match &self.holder {
+            Some(current) if current.as_str() != holder => Err(ErrorCode::Locked),
+            _ => Ok(()),
+        }
+    }
+
+    /// Locks the Rig under `lock.holder`. Another Holder's Lock is refused
+    /// unless this is a Takeover.
+    fn lock(&mut self, lock: Lock) -> Result<(), ErrorCode> {
+        if !lock.takeover {
+            self.check_lock(lock.holder)?;
+        }
+        match self.holder() {
+            current if current == lock.holder => return Ok(()),
+            "" => log::info!("{} locked the Rig", lock.holder),
+            current => log::info!("{} took over the Lock from {current}", lock.holder),
+        }
+        self.holder = Some(Holder::new(lock.holder).expect("decoding caps holders at 64 bytes"));
+        Ok(())
+    }
+
+    /// Unlocks the Rig if `holder` holds the Lock. Only the Holder may
+    /// release it; releasing an unlocked Rig changes nothing.
+    fn release_lock(&mut self, holder: &str) -> Result<(), ErrorCode> {
+        self.check_lock(holder)?;
+        if self.holder.take().is_some() {
+            log::info!("{holder} released the Lock");
+        }
+        Ok(())
     }
 
     /// Saves `label` and reports it from now on. Empty, or the default by
@@ -186,6 +278,40 @@ impl Rig {
             "" => default,
             custom => Label::new(custom).expect("decoding caps labels at 64 bytes"),
         };
+        Ok(())
+    }
+
+    /// Saves `wifi` and reports it from now on. `None` clears the
+    /// credentials.
+    fn set_wifi<B: Board>(
+        &mut self,
+        board: &mut B,
+        wifi: Option<Credentials>,
+    ) -> Result<(), ErrorCode> {
+        board.save_wifi(wifi.as_ref()).map_err(|StorageFault| ErrorCode::StorageFault)?;
+        match &wifi {
+            Some(wifi) => log::info!("Wi-Fi credentials set for {}", wifi.ssid()),
+            None => log::info!("Wi-Fi credentials cleared"),
+        }
+        self.wifi = wifi;
+        Ok(())
+    }
+
+    /// Saves `addressing` and reports it from now on.
+    fn set_addressing<B: Board>(
+        &mut self,
+        board: &mut B,
+        addressing: Addressing,
+    ) -> Result<(), ErrorCode> {
+        board.save_addressing(&addressing).map_err(|StorageFault| ErrorCode::StorageFault)?;
+        match &addressing {
+            Addressing::Dhcp => log::info!("address set to DHCP"),
+            Addressing::Static(set) => {
+                let [a, b, c, d] = set.address();
+                log::info!("address set to {a}.{b}.{c}.{d}/{}", set.prefix());
+            }
+        }
+        self.addressing = addressing;
         Ok(())
     }
 

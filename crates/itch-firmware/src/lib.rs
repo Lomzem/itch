@@ -6,11 +6,20 @@
 #![no_std]
 
 pub mod board;
+pub mod connections;
 pub mod crash;
 #[cfg(feature = "firmware")]
 pub mod logger;
-pub mod mailbox;
+pub mod mdns;
+#[cfg(feature = "firmware")]
+pub mod radio;
+#[cfg(feature = "firmware")]
+pub mod responder;
+pub mod serve;
 pub mod settings;
 pub mod supervisor;
 #[cfg(feature = "firmware")]
+pub mod tcp;
+#[cfg(feature = "firmware")]
 pub mod usb;
+pub mod wifi;

@@ -3,7 +3,10 @@
 use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
 use std::rc::Rc;
+use std::task::Poll;
 
+use embassy_embedded_hal::adapter::BlockingAsync;
+use embassy_futures::block_on;
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{ErrorType as PinErrorType, OutputPin};
 use embedded_hal::i2c::{self, ErrorKind, I2c, NoAcknowledgeSource, Operation};
@@ -13,10 +16,17 @@ use embedded_storage::nor_flash::{
 use itch_core::board::{Board, Counters};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, LogControl, Rig};
-use itch_core::wire::{LogLevel, Message, Reply, Request, Response, SetLabel, WriteChannels};
+use itch_core::wire::{
+    AddressMode, Link, LogLevel, Message, Reply, Request, Response, SetAddress, SetLabel, SetWifi,
+    WriteChannels,
+};
 use itch_firmware::board::{Chip, RevA};
+use itch_firmware::serve::Clock;
 use itch_firmware::settings::PARTITION;
 use itch_firmware::supervisor::{Check, Failsafe, Latch, ResetLine, Supervisor};
+use itch_firmware::wifi::Wifi;
+use sequential_storage::cache::Cache;
+use sequential_storage::map::{MapConfig, MapStorage};
 
 const ADDRESS: u8 = 0x20;
 pub const IODIRA: u8 = 0x00;
@@ -215,6 +225,16 @@ pub fn advance(ms: u64) {
     CLOCK.with(|clock| clock.set(clock.get() + ms));
 }
 
+/// Waits on the bench clock. A wait ends once the test has advanced the
+/// clock far enough and polls again.
+pub struct BenchClock;
+
+impl Clock for BenchClock {
+    async fn until(&self, at: u64) {
+        std::future::poll_fn(|_| if now() >= at { Poll::Ready(()) } else { Poll::Pending }).await
+    }
+}
+
 thread_local! {
     /// The supervisor of the bench's `rig`, one per test, replaced at every
     /// power-on.
@@ -279,6 +299,22 @@ impl Flash {
             stall_ms: 0,
             writes: vec![],
         }))
+    }
+
+    /// A partition holding `record` as its settings, the way every firmware
+    /// saves them, such as a version 1 record an older firmware left.
+    pub fn holding(record: &[u8]) -> Rc<RefCell<Self>> {
+        #[repr(align(4))]
+        struct Scratch([u8; 256]);
+        let flash = Self::erased();
+        let mut map = MapStorage::new(
+            BlockingAsync::new(FlashPort(Rc::clone(&flash))),
+            MapConfig::new(PARTITION),
+            Cache::new_uncached(),
+        );
+        block_on(map.store_item(&mut Scratch([0; 256]).0, &(), &record)).expect("stored");
+        flash.borrow_mut().writes.clear();
+        flash
     }
 
     /// Overwrites the whole partition with noise.
@@ -364,6 +400,17 @@ impl NorFlash for FlashPort {
     }
 }
 
+/// An address configuration as `SetAddress` and `GetStatus` carry it:
+/// mode, address, prefix and gateway.
+pub type Addressing = (AddressMode, [u8; 4], u8, [u8; 4]);
+
+/// DHCP: every field zero.
+pub const DHCP: Addressing = (AddressMode::Dhcp, [0; 4], 0, [0; 4]);
+
+/// A made-up static address from the documentation range:
+/// `192.0.2.10/24` through `192.0.2.1`.
+pub const STATIC: Addressing = (AddressMode::Static, [192, 0, 2, 10], 24, [192, 0, 2, 1]);
+
 pub type FakeRevA = RevA<Bus, ResetLine<'static, ResetPin>, Led, NoDelay, FlashPort>;
 
 /// The bench's log selection. Nothing here reads its Log Events.
@@ -379,6 +426,9 @@ pub struct Bench {
     pub expander: Rc<RefCell<Expander>>,
     pub flash: Rc<RefCell<Flash>>,
     led: Rc<Cell<bool>>,
+    /// What the radio and the network stack tell the board, and the
+    /// credentials the board hands the radio.
+    pub wifi: &'static Wifi,
     pub board: FakeRevA,
     pub rig: Rig,
 }
@@ -394,6 +444,7 @@ impl Bench {
         let expander = Rc::new(RefCell::new(Expander::power_on()));
         let led = Rc::new(Cell::new(false));
         let latch = Box::leak(Box::new(Latch::new()));
+        let wifi = Box::leak(Box::new(Wifi::new()));
         let mut board = RevA::new(
             Bus(Rc::clone(&expander)),
             ResetLine::new(ResetPin(Rc::clone(&expander)), latch),
@@ -407,13 +458,14 @@ impl Bench {
                 now,
                 check_in,
                 counters: Counters::default,
+                wifi,
             },
         );
         let supervisor = Supervisor::new(latch, BenchFailsafe(Rc::clone(&expander)));
         supervisor.start(now());
         SUPERVISOR.with(|cell| cell.replace(Some(Rc::new(supervisor))));
         let rig = Rig::new(&mut board);
-        Self { expander, flash, led, board, rig }
+        Self { expander, flash, led, wifi, board, rig }
     }
 
     /// Powers up and brings the expander up, as the firmware does at boot.
@@ -441,7 +493,7 @@ impl Bench {
 
     /// Mask-writes the Channels through the Rig, bit 0 = CH1.
     pub fn write(&mut self, mask: u16, values: u16) {
-        let request = Request::WriteChannels(WriteChannels { mask, values });
+        let request = Request::WriteChannels(WriteChannels { holder: "", mask, values });
         let mut payload = [0; MAX_PAYLOAD];
         let len = Message::Request { request_id: 1, request }.encode(&mut payload);
         let mut reply = [0; MAX_PAYLOAD];
@@ -452,11 +504,70 @@ impl Bench {
     /// Renames the Rig through the Rig logic: `Ok` with the label it now
     /// reports, or the error code's name.
     pub fn set_label(&mut self, label: &str) -> Result<String, String> {
-        let request = Request::SetLabel(SetLabel { label });
+        let request = Request::SetLabel(SetLabel { holder: "", label });
         self.request(request, |reply| match reply {
             Reply::SetLabel { label } => label.to_owned(),
             reply => panic!("not a SetLabel reply: {reply:?}"),
         })
+    }
+
+    /// Gives the Rig Wi-Fi credentials through the Rig logic, or clears
+    /// them with an empty `ssid` and `passphrase`: `Ok`, or the error code's
+    /// name.
+    pub fn set_wifi(&mut self, ssid: &str, passphrase: &str) -> Result<(), String> {
+        let request = Request::SetWifi(SetWifi { holder: "", ssid, passphrase });
+        self.request(request, |reply| match reply {
+            Reply::SetWifi => (),
+            reply => panic!("not a SetWifi reply: {reply:?}"),
+        })
+    }
+
+    /// Sets how the Rig takes its address through the Rig logic: `Ok`, or
+    /// the error code's name.
+    pub fn set_address(&mut self, addressing: Addressing) -> Result<(), String> {
+        let (mode, address, prefix, gateway) = addressing;
+        let request =
+            Request::SetAddress(SetAddress { holder: "", mode, address, prefix, gateway });
+        self.request(request, |reply| match reply {
+            Reply::SetAddress => (),
+            reply => panic!("not a SetAddress reply: {reply:?}"),
+        })
+    }
+
+    /// The address configuration `GetStatus` reports.
+    pub fn addressing(&mut self) -> Addressing {
+        self.request(Request::GetStatus, |reply| match reply {
+            Reply::GetStatus(status) => {
+                (status.mode, status.address, status.prefix, status.gateway)
+            }
+            reply => panic!("not a GetStatus reply: {reply:?}"),
+        })
+        .expect("GetStatus succeeds")
+    }
+
+    /// The network `GetStatus` reports credentials for. `None` = none.
+    pub fn wifi(&mut self) -> Option<String> {
+        self.request(Request::GetStatus, |reply| match reply {
+            Reply::GetStatus(status) => status.wifi_configured.then(|| status.ssid.to_owned()),
+            reply => panic!("not a GetStatus reply: {reply:?}"),
+        })
+        .expect("GetStatus succeeds")
+    }
+
+    /// The Wi-Fi link and current address `GetStatus` reports.
+    pub fn network(&mut self) -> (Link, [u8; 4]) {
+        self.request(Request::GetStatus, |reply| match reply {
+            Reply::GetStatus(status) => (status.link, status.current_address),
+            reply => panic!("not a GetStatus reply: {reply:?}"),
+        })
+        .expect("GetStatus succeeds")
+    }
+
+    /// The SSID and passphrase the board would join with. `GetStatus` never
+    /// reports the passphrase.
+    pub fn credentials(&mut self) -> Option<(String, String)> {
+        let wifi = self.board.load_wifi()?;
+        Some((wifi.ssid().to_owned(), wifi.passphrase().to_owned()))
     }
 
     /// The label `Hello` reports.

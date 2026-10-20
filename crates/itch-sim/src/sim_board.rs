@@ -1,8 +1,11 @@
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-use itch_core::board::{Board, BoardInfo, Counters, HwFault, StorageFault};
+use itch_core::board::{Board, BoardInfo, Counters, HwFault, Network, StorageFault};
 use itch_core::label::Label;
+use itch_core::wifi::{Addressing, Credentials};
+use itch_core::wire::Link;
 
 use crate::logs::DROPPED_LOGS;
 
@@ -16,12 +19,20 @@ pub struct SimBoard {
     hardware_fault: bool,
     /// The saved label, for this run only.
     label: Option<Label>,
-    /// Makes every label save fail.
+    /// The saved Wi-Fi credentials, for this run only.
+    wifi: Option<Credentials>,
+    /// The saved address configuration, for this run only.
+    addressing: Addressing,
+    /// Makes every save fail.
     storage_fault: bool,
+    /// The IPv4 address the sim is bound to, reported as the Rig's DHCP
+    /// address while it has credentials. Zero if it isn't bound to one.
+    address: [u8; 4],
 }
 
 impl SimBoard {
-    pub fn new(hardware_fault: bool, storage_fault: bool) -> Self {
+    /// `bound` is the address the sim listens on.
+    pub fn new(hardware_fault: bool, storage_fault: bool, bound: SocketAddr) -> Self {
         Self {
             info: BoardInfo {
                 // A locally administered MAC, so it can't clash with a real Rig.
@@ -37,7 +48,13 @@ impl SimBoard {
             channels: 0,
             hardware_fault,
             label: None,
+            wifi: None,
+            addressing: Addressing::Dhcp,
             storage_fault,
+            address: match bound.ip() {
+                IpAddr::V4(address) => address.octets(),
+                IpAddr::V6(_) => [0; 4],
+            },
         }
     }
 }
@@ -91,5 +108,45 @@ impl Board for SimBoard {
         }
         self.label = Label::new(label);
         Ok(())
+    }
+
+    fn load_wifi(&mut self) -> Option<Credentials> {
+        self.wifi
+    }
+
+    fn save_wifi(&mut self, wifi: Option<&Credentials>) -> Result<(), StorageFault> {
+        if self.storage_fault {
+            return Err(StorageFault);
+        }
+        self.wifi = wifi.copied();
+        Ok(())
+    }
+
+    fn load_addressing(&mut self) -> Addressing {
+        self.addressing
+    }
+
+    fn save_addressing(&mut self, addressing: &Addressing) -> Result<(), StorageFault> {
+        if self.storage_fault {
+            return Err(StorageFault);
+        }
+        self.addressing = *addressing;
+        Ok(())
+    }
+
+    /// With credentials the sim is "connected" at its static address, or
+    /// with DHCP at the address it is bound to; it joins no real network.
+    /// Bound to no one IPv4 address, with DHCP it is joining, like a Rig
+    /// still waiting for its lease.
+    fn network(&self) -> Network {
+        let address = match self.addressing {
+            Addressing::Dhcp => self.address,
+            Addressing::Static(set) => set.address(),
+        };
+        match (self.wifi, address) {
+            (None, _) => Network::default(),
+            (Some(_), [0, 0, 0, 0]) => Network { link: Link::Joining, address },
+            (Some(_), address) => Network { link: Link::Connected, address },
+        }
     }
 }

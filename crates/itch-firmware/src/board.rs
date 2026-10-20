@@ -5,10 +5,12 @@ use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::OutputPin;
 use embedded_hal::i2c::I2c;
 use embedded_storage::nor_flash::NorFlash;
-use itch_core::board::{Board, BoardInfo, Counters, HwFault, StorageFault};
+use itch_core::board::{Board, BoardInfo, Counters, HwFault, Network, StorageFault};
 use itch_core::label::Label;
+use itch_core::wifi::{Addressing, Credentials};
 
-use crate::settings::Settings;
+use crate::settings::{Settings, Snapshot};
+use crate::wifi::Wifi;
 
 /// The MCP23017's I2C address: A0-A2 are tied to GND.
 const EXPANDER: u8 = 0x20;
@@ -60,6 +62,8 @@ pub struct Chip {
     pub check_in: fn(u64),
     /// The counters the logger and the transport writers keep.
     pub counters: fn() -> Counters,
+    /// What the radio and the network stack report.
+    pub wifi: &'static Wifi,
 }
 
 /// The Rev A board: an MCP23017 on I2C driving the 16 Channels, with its
@@ -78,6 +82,11 @@ pub struct RevA<I2C, RESET, LED, DELAY, FLASH: NorFlash> {
     /// Where a fault blink is: lit or not.
     blink: bool,
     settings: Settings<FLASH>,
+    /// New credentials were saved but not yet handed to the radio.
+    rejoin: bool,
+    /// A new address configuration was saved but not yet handed to the
+    /// network stack.
+    readdress: bool,
 }
 
 impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash>
@@ -93,7 +102,7 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
             reset_reason: chip.reset_reason,
             last_panic: chip.last_panic,
         };
-        Self {
+        let board = Self {
             i2c,
             reset,
             led,
@@ -104,6 +113,35 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
             faulted: false,
             blink: false,
             settings: Settings::new(flash, chip.now, chip.check_in),
+            rejoin: false,
+            readdress: false,
+        };
+        board.advertise();
+        board
+    }
+
+    /// Hands mDNS the Label saved, or the default for an empty one.
+    fn advertise(&self) {
+        let label = self.settings.saved().label;
+        let label = if label.as_str().is_empty() {
+            Label::default_for(self.info.hardware_id)
+        } else {
+            label
+        };
+        self.chip.wifi.advertise(label);
+    }
+
+    /// Hands the radio credentials, and the network stack an address
+    /// configuration, saved since the last call. The Rig task calls it once
+    /// the reply to the change is on its way, so a client on Wi-Fi learns
+    /// the change was saved before the Rig leaves the network or its
+    /// address.
+    pub fn apply_settings(&mut self) {
+        if core::mem::take(&mut self.rejoin) {
+            self.chip.wifi.join(self.settings.saved().wifi);
+        }
+        if core::mem::take(&mut self.readdress) {
+            self.chip.wifi.readdress(self.settings.saved().addressing);
         }
     }
 
@@ -214,11 +252,42 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
     }
 
     fn load_label(&mut self) -> Option<Label> {
-        self.settings.load()
+        Some(self.settings.saved().label)
     }
 
     fn save_label(&mut self, label: &str) -> Result<(), StorageFault> {
-        self.settings.save(&Label::new(label).ok_or(StorageFault)?)
+        let label = Label::new(label).ok_or(StorageFault)?;
+        self.settings.save(Snapshot { label, ..*self.settings.saved() })?;
+        self.advertise();
+        Ok(())
+    }
+
+    fn load_wifi(&mut self) -> Option<Credentials> {
+        self.settings.saved().wifi
+    }
+
+    /// The radio joins with them once [`apply_settings`](Self::apply_settings)
+    /// hands them over.
+    fn save_wifi(&mut self, wifi: Option<&Credentials>) -> Result<(), StorageFault> {
+        self.settings.save(Snapshot { wifi: wifi.copied(), ..*self.settings.saved() })?;
+        self.rejoin = true;
+        Ok(())
+    }
+
+    fn load_addressing(&mut self) -> Addressing {
+        self.settings.saved().addressing
+    }
+
+    /// The network stack takes it once
+    /// [`apply_settings`](Self::apply_settings) hands it over.
+    fn save_addressing(&mut self, addressing: &Addressing) -> Result<(), StorageFault> {
+        self.settings.save(Snapshot { addressing: *addressing, ..*self.settings.saved() })?;
+        self.readdress = true;
+        Ok(())
+    }
+
+    fn network(&self) -> Network {
+        self.chip.wifi.network()
     }
 }
 
@@ -256,7 +325,7 @@ mod esp32s3 {
     use esp_hal::delay::Delay;
     use esp_hal::gpio::{Level, Output, OutputConfig};
     use esp_hal::i2c::master::{Config, I2c, SoftwareTimeout};
-    use esp_hal::peripherals::{GPIO, GPIO6};
+    use esp_hal::peripherals::{self, GPIO, GPIO6};
     use esp_hal::rtc_cntl::{Rtc, Rwdt, RwdtStage, RwdtStageAction};
     use esp_hal::time::Duration;
     use esp_hal::timer::timg::TimerGroup;
@@ -269,6 +338,7 @@ mod esp32s3 {
     use super::{Chip, RevA};
     use crate::crash::{self, RECORD_LEN, Record};
     use crate::supervisor::{self, ResetLine};
+    use crate::wifi::WIFI;
     use crate::{logger, usb};
 
     /// The expander's RESET is GPIO6, pulled low on the board.
@@ -309,6 +379,8 @@ mod esp32s3 {
         /// USB Serial/JTAG, which keeps espflash's auto-reset on the same cable.
         pub usb_rx: UsbRx,
         pub usb_tx: UsbTx,
+        /// The radio, for Wi-Fi.
+        pub radio: peripherals::WIFI<'static>,
     }
 
     /// Boots the chip. The expander RESET is driven low before anything
@@ -350,12 +422,13 @@ mod esp32s3 {
             now: || embassy_time::Instant::now().as_millis(),
             check_in: supervisor::check_in,
             counters,
+            wifi: &WIFI,
         };
         let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
         let reset = ResetLine::new(reset, &supervisor::TRIPPED);
         let flash = FlashStorage::new(p.FLASH);
         let board = RevA::new(i2c, reset, led, Delay::new(), flash, chip);
-        Parts { board, watchdog, usb_rx, usb_tx }
+        Parts { board, watchdog, usb_rx, usb_tx, radio: p.WIFI }
     }
 
     /// Takes the crash record the previous boot left, clearing it so it is
