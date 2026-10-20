@@ -1,7 +1,9 @@
 mod common;
 
 use common::TestRig;
-use itch_core::wire::{ErrorCode, Lock, LogLevel, Reply, Request, SetLabel, WriteChannels};
+use itch_core::wire::{
+    ErrorCode, Lock, LogLevel, Reply, Request, SetLabel, SetWifi, WriteChannels,
+};
 
 const ALICE: &str = "alice@ws3";
 const BOB: &str = "bob@ws7";
@@ -16,6 +18,10 @@ fn clear(holder: &str) -> Request<'_> {
 
 fn set_label<'a>(holder: &'a str, label: &'a str) -> Request<'a> {
     Request::SetLabel(SetLabel { holder, label })
+}
+
+fn set_wifi(holder: &str) -> Request<'_> {
+    Request::SetWifi(SetWifi { holder, ssid: "ExampleRigNet", passphrase: "example-passphrase" })
 }
 
 fn lock(holder: &str) -> Request<'_> {
@@ -52,6 +58,7 @@ fn an_unlocked_rig_accepts_changes_from_any_holder() {
     assert_eq!(rig.ok(write("", 0x0002, 0x0002)), Reply::WriteChannels { state: 0x0003 });
     assert_eq!(rig.ok(clear(BOB)), Reply::Clear { state: 0 });
     assert_eq!(rig.ok(set_label("", "bench3")), Reply::SetLabel { label: "bench3" });
+    assert_eq!(rig.ok(set_wifi(ALICE)), Reply::SetWifi);
 }
 
 #[test]
@@ -61,9 +68,11 @@ fn a_locked_rig_refuses_changes_from_anyone_else_naming_its_holder() {
         assert_eq!(rig.refusal(write(holder, 0x0002, 0x0002)), (ErrorCode::Locked, ALICE));
         assert_eq!(rig.refusal(clear(holder)), (ErrorCode::Locked, ALICE));
         assert_eq!(rig.refusal(set_label(holder, "bench3")), (ErrorCode::Locked, ALICE));
+        assert_eq!(rig.refusal(set_wifi(holder)), (ErrorCode::Locked, ALICE));
     }
     assert_eq!(channels(&mut rig), 0x0001);
     assert!(rig.board.saved.is_empty());
+    assert!(rig.board.saved_wifi.is_empty());
 }
 
 #[test]
@@ -71,6 +80,7 @@ fn the_holder_changes_a_locked_rig_freely() {
     let mut rig = locked_by_alice();
     assert_eq!(rig.ok(write(ALICE, 0x0002, 0x0002)), Reply::WriteChannels { state: 0x0003 });
     assert_eq!(rig.ok(set_label(ALICE, "bench3")), Reply::SetLabel { label: "bench3" });
+    assert_eq!(rig.ok(set_wifi(ALICE)), Reply::SetWifi);
     assert_eq!(rig.ok(clear(ALICE)), Reply::Clear { state: 0 });
 }
 

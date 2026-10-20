@@ -22,9 +22,11 @@ Serves a simulated Rig over TCP, by default on 127.0.0.1 with a free port.
 Once listening it prints one line: `itch-sim listening on tcp://HOST:PORT`.
 
 --hardware-fault simulates a Channel expander that never answers.
---storage-fault makes every label save fail with `StorageFault`.
+--storage-fault makes every settings save fail with `StorageFault`.
 
-The label lives in memory, so every run starts with the default label.";
+The label and Wi-Fi credentials live in memory, so every run starts with
+the default label and no credentials. With credentials, `GetStatus` reports
+the Wi-Fi link connected at the address the sim listens on.";
 
 /// How often the Rig does its idle work.
 const TICK: Duration = Duration::from_millis(50);
@@ -63,10 +65,11 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    println!("itch-sim listening on tcp://{}", listener.local_addr().unwrap());
+    let bound = listener.local_addr().unwrap();
+    println!("itch-sim listening on tcp://{bound}");
     logs::init();
 
-    let mut board = SimBoard::new(hardware_fault, storage_fault);
+    let mut board = SimBoard::new(hardware_fault, storage_fault, bound);
     let sim = Sim { rig: Rig::new(&mut board), board };
     let sim = Arc::new(Mutex::new(sim));
     thread::spawn({

@@ -1,5 +1,6 @@
-use itch_core::board::{Board, BoardInfo, Counters, HwFault, StorageFault};
+use itch_core::board::{Board, BoardInfo, Counters, HwFault, Network, StorageFault};
 use itch_core::label::Label;
+use itch_core::wifi::Credentials;
 
 /// A Board for host tests. Its facts match the `hello-ok` vector.
 pub struct FakeBoard {
@@ -25,8 +26,15 @@ pub struct FakeBoard {
     pub stored: Option<String>,
     /// Every saved label, oldest first.
     pub saved: Vec<String>,
+    /// The Wi-Fi credentials in storage, loaded at boot, as SSID and
+    /// passphrase. `None` = none.
+    pub wifi: Option<(String, String)>,
+    /// Every saved set of Wi-Fi credentials, oldest first. `None` = cleared.
+    pub saved_wifi: Vec<Option<(String, String)>>,
     /// Makes every save fail.
     pub storage_fault: bool,
+    /// The Wi-Fi link and address the board reports.
+    pub network: Network,
 }
 
 impl FakeBoard {
@@ -50,7 +58,10 @@ impl FakeBoard {
             counters: Counters::default(),
             stored: None,
             saved: Vec::new(),
+            wifi: None,
+            saved_wifi: Vec::new(),
             storage_fault: false,
+            network: Network::default(),
         }
     }
 
@@ -109,5 +120,23 @@ impl Board for FakeBoard {
         self.stored = Some(label.into());
         self.saved.push(label.into());
         Ok(())
+    }
+
+    fn load_wifi(&mut self) -> Option<Credentials> {
+        let (ssid, passphrase) = self.wifi.as_ref()?;
+        Credentials::new(ssid, passphrase)
+    }
+
+    fn save_wifi(&mut self, wifi: Option<&Credentials>) -> Result<(), StorageFault> {
+        if self.storage_fault {
+            return Err(StorageFault);
+        }
+        self.wifi = wifi.map(|wifi| (wifi.ssid().into(), wifi.passphrase().into()));
+        self.saved_wifi.push(self.wifi.clone());
+        Ok(())
+    }
+
+    fn network(&self) -> Network {
+        self.network
     }
 }

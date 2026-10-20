@@ -94,7 +94,8 @@ A `Hello` refused with `Busy` and detail `queue full`, an illustrative codec exa
 | `text` | `u8` byte length, then that many bytes of UTF-8 |
 | `[u8; N]` | `N` raw bytes |
 
-- Label text and Holder names are at most 64 bytes.
+- Label text and Holder names are at most 64 bytes. A Wi-Fi SSID is at most 32 bytes and its passphrase 8 to 63.
+- An IPv4 address is a `[u8; 4]` in network order (`c0 00 02 0a` is `192.0.2.10`).
 - Enums are `u8`, counters `u32`, uptime a `u64` in milliseconds.
 - The Hardware ID is 6 raw bytes, the factory MAC in transmission order (`60 55 f9 c0 27 18` is `60:55:F9:C0:27:18`).
 
@@ -124,7 +125,7 @@ A powered Rig retains its commanded Channel state when a script exits, crashes, 
 
 A client may Lock a Rig under a Holder name, such as `alice@ws3`, so that nobody else's script can change it (ADR 0009). While a Rig is Locked, only requests carrying its Holder may change it; anyone may still look at it.
 
-- Every changing request (`WriteChannels`, `Clear`, `SetLabel`) starts with a `holder` field. Empty means no Holder. The Rig keeps no Lock state per connection, so a client sends its Holder on every change.
+- Every changing request (`WriteChannels`, `Clear`, `SetLabel`, `SetWifi`) starts with a `holder` field. Empty means no Holder. The Rig keeps no Lock state per connection, so a client sends its Holder on every change.
 - A changing request on a Locked Rig whose `holder` isn't the Holder, including an empty one, is refused with `Locked` and changes nothing. Its `detail` names the Holder for people to read. A client that needs the Holder reads it from `GetStatus`, never from `detail`.
 - `Hello`, `GetChannels`, `GetStatus` and `SetLogLevel` carry no Holder and are never refused for a Lock.
 - [`Lock`](messages.md#lock) Locks an unlocked Rig. The same Holder may Lock again with no effect, which is how a script that crashed or lost its connection picks its Lock back up. Another Holder is refused with `Locked`, unless it sets `takeover`, which hands the Lock to it: a Takeover. The old Holder's next change is then refused with `Locked` naming the new Holder.
@@ -152,6 +153,7 @@ Conventions:
 
 - Hex strings (`payload`, `frame`, `stream`, `hardware_id`) are lowercase byte pairs separated by spaces. Readers should ignore whitespace and case.
 - Integer fields are JSON numbers. Consumers must preserve the full range of `u64` uptime values.
+- IPv4 addresses (`current_address`) are dotted-quad strings, such as `"192.0.2.10"`.
 
 Top level:
 

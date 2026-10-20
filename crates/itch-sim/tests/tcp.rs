@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::SETTLE_MS;
 use itch_core::wire::{
-    ErrorCode, Event, HelloReply, Lock, LogEvent, LogLevel, Message, Reply, Request, Response,
-    SetLabel, StatusReply, WriteChannels,
+    ErrorCode, Event, HelloReply, Link, Lock, LogEvent, LogLevel, Message, Reply, Request,
+    Response, SetLabel, SetWifi, StatusReply, WriteChannels,
 };
 
 #[test]
@@ -143,6 +143,10 @@ fn status_counts_bad_frames_from_every_connection() {
             expander_faults: 0,
             usb_tx_dropped: 0,
             holder: "",
+            wifi_configured: false,
+            ssid: "",
+            link: Link::Off,
+            current_address: [0; 4],
         }
     );
 }
@@ -210,6 +214,74 @@ fn a_lock_keeps_other_connections_from_changing_the_rig_until_taken_over() {
         exchange(&mut alice, 3, write("alice", 0x0001)),
         Response::Ok(Reply::WriteChannels { state: 0x0001 })
     );
+}
+
+const SSID: &str = "ExampleRigNet";
+
+fn set_wifi<'a>(holder: &'a str, ssid: &'a str, passphrase: &'a str) -> Request<'a> {
+    Request::SetWifi(SetWifi { holder, ssid, passphrase })
+}
+
+/// What `GetStatus` reports of the network: credentials, SSID, link and
+/// current address.
+fn network(stream: &mut TcpStream) -> (bool, &'static str, Link, [u8; 4]) {
+    match exchange(stream, 9, Request::GetStatus) {
+        Response::Ok(Reply::GetStatus(status)) => {
+            (status.wifi_configured, status.ssid, status.link, status.current_address)
+        }
+        other => panic!("not a GetStatus reply: {other:?}"),
+    }
+}
+
+#[test]
+fn wifi_credentials_last_for_the_run_and_connect_at_the_bound_address() {
+    let sim = Sim::start();
+    let off = (false, "", Link::Off, [0; 4]);
+    assert_eq!(network(&mut sim.connect()), off);
+
+    let set = set_wifi("", SSID, "example-passphrase");
+    assert_eq!(exchange(&mut sim.connect(), 1, set), Response::Ok(Reply::SetWifi));
+    assert_eq!(network(&mut sim.connect()), (true, SSID, Link::Connected, [127, 0, 0, 1]));
+
+    assert_eq!(exchange(&mut sim.connect(), 2, set_wifi("", "", "")), Response::Ok(Reply::SetWifi));
+    assert_eq!(network(&mut sim.connect()), off);
+}
+
+#[test]
+fn wifi_credentials_out_of_range_are_malformed() {
+    let sim = Sim::start();
+    let mut stream = sim.connect();
+    for (ssid, passphrase) in [(SSID, "short"), ("", "example-passphrase")] {
+        let Response::Err { error, .. } = exchange(&mut stream, 1, set_wifi("", ssid, passphrase))
+        else {
+            panic!("{ssid:?} with {passphrase:?} was accepted");
+        };
+        assert_eq!(error, ErrorCode::Malformed);
+    }
+    assert_eq!(network(&mut stream), (false, "", Link::Off, [0; 4]));
+}
+
+#[test]
+fn wifi_credentials_are_refused_on_a_storage_fault_or_by_the_lock() {
+    let faulty = Sim::start_with(&["--storage-fault"]);
+    let mut stream = faulty.connect();
+    let Response::Err { error, .. } =
+        exchange(&mut stream, 1, set_wifi("", SSID, "example-passphrase"))
+    else {
+        panic!("the credentials were saved");
+    };
+    assert_eq!(error, ErrorCode::StorageFault);
+    assert!(!network(&mut stream).0);
+
+    let sim = Sim::start();
+    let mut alice = sim.connect();
+    let lock = Request::Lock(Lock { holder: "alice", takeover: false });
+    assert_eq!(exchange(&mut alice, 1, lock), Response::Ok(Reply::Lock));
+    assert_eq!(
+        exchange(&mut sim.connect(), 1, set_wifi("bob", SSID, "example-passphrase")),
+        Response::Err { request_type: 0x0D, error: ErrorCode::Locked, detail: "alice" }
+    );
+    assert!(!network(&mut alice).0);
 }
 
 struct Sim {

@@ -6,4 +6,5 @@ mod holder;
 pub mod label;
 pub mod logs;
 pub mod rig;
+pub mod wifi;
 pub mod wire;

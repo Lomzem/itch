@@ -1,8 +1,11 @@
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::Ordering;
 use std::time::Instant;
 
-use itch_core::board::{Board, BoardInfo, Counters, HwFault, StorageFault};
+use itch_core::board::{Board, BoardInfo, Counters, HwFault, Network, StorageFault};
 use itch_core::label::Label;
+use itch_core::wifi::Credentials;
+use itch_core::wire::Link;
 
 use crate::logs::DROPPED_LOGS;
 
@@ -16,12 +19,18 @@ pub struct SimBoard {
     hardware_fault: bool,
     /// The saved label, for this run only.
     label: Option<Label>,
-    /// Makes every label save fail.
+    /// The saved Wi-Fi credentials, for this run only.
+    wifi: Option<Credentials>,
+    /// Makes every save fail.
     storage_fault: bool,
+    /// The IPv4 address the sim is bound to, reported as the Rig's address
+    /// while it has credentials. Zero if it isn't bound to one.
+    address: [u8; 4],
 }
 
 impl SimBoard {
-    pub fn new(hardware_fault: bool, storage_fault: bool) -> Self {
+    /// `bound` is the address the sim listens on.
+    pub fn new(hardware_fault: bool, storage_fault: bool, bound: SocketAddr) -> Self {
         Self {
             info: BoardInfo {
                 // A locally administered MAC, so it can't clash with a real Rig.
@@ -37,7 +46,12 @@ impl SimBoard {
             channels: 0,
             hardware_fault,
             label: None,
+            wifi: None,
             storage_fault,
+            address: match bound.ip() {
+                IpAddr::V4(address) => address.octets(),
+                IpAddr::V6(_) => [0; 4],
+            },
         }
     }
 }
@@ -91,5 +105,26 @@ impl Board for SimBoard {
         }
         self.label = Label::new(label);
         Ok(())
+    }
+
+    fn load_wifi(&mut self) -> Option<Credentials> {
+        self.wifi
+    }
+
+    fn save_wifi(&mut self, wifi: Option<&Credentials>) -> Result<(), StorageFault> {
+        if self.storage_fault {
+            return Err(StorageFault);
+        }
+        self.wifi = wifi.copied();
+        Ok(())
+    }
+
+    /// With credentials the sim is "connected" at the address it is bound
+    /// to; it joins no real network.
+    fn network(&self) -> Network {
+        match self.wifi {
+            Some(_) => Network { link: Link::Connected, address: self.address },
+            None => Network::default(),
+        }
     }
 }
