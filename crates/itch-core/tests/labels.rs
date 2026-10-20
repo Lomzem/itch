@@ -4,7 +4,7 @@ use common::{FakeBoard, TestRig};
 use itch_core::wire::{ErrorCode, Reply, Request, SetLabel};
 
 fn set_label(label: &str) -> Request<'_> {
-    Request::SetLabel(SetLabel { label })
+    Request::SetLabel(SetLabel { holder: "", label })
 }
 
 fn hello_label(rig: &mut TestRig) -> String {

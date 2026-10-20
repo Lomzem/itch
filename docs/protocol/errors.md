@@ -12,6 +12,7 @@ A response's `status` is 0 on success, otherwise one of these codes. `detail` is
 | 8 | `HardwareFault` | The Channel expander is unreachable or held in reset |
 | 9 | `StorageFault` | The Rig couldn't persist a setting |
 | 10 | `Internal` | A Rig bug |
+| 11 | `Locked` | Someone else holds the Rig's Lock (see [Locks](README.md#locks)). `detail` names the Holder |
 
 ## Expander faults
 

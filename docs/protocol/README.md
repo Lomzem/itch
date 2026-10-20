@@ -2,12 +2,12 @@
 
 This folder is the source of truth for the protocol between a Rig (or `itch-sim`) and its clients. A client can be written from these files alone.
 
-- `README.md` (this file): transports, framing, the message header, field types, ordering, Channel state and versioning.
+- `README.md` (this file): transports, framing, the message header, field types, ordering, Channel state, Locks and versioning.
 - [`messages.md`](messages.md): a byte table and hex example per message.
 - [`errors.md`](errors.md): error codes, log levels and counters.
-- [`vectors-v2.json`](vectors-v2.json): the conformance vectors that every codec must reproduce. Every ` ```hex ` block in these docs is checked against it.
+- [`vectors-v3.json`](vectors-v3.json): the conformance vectors that every codec must reproduce. Every ` ```hex ` block in these docs is checked against it.
 
-This is **protocol 2**.
+This is **protocol 3**.
 
 ## Transports
 
@@ -94,18 +94,18 @@ A `Hello` refused with `Busy` and detail `queue full`, an illustrative codec exa
 | `text` | `u8` byte length, then that many bytes of UTF-8 |
 | `[u8; N]` | `N` raw bytes |
 
-- Label text is at most 64 bytes.
+- Label text and Holder names are at most 64 bytes.
 - Enums are `u8`, counters `u32`, uptime a `u64` in milliseconds.
 - The Hardware ID is 6 raw bytes, the factory MAC in transmission order (`60 55 f9 c0 27 18` is `60:55:F9:C0:27:18`).
 
 ### Strict decoding
 
-Every message has an exact layout. The Rig answers `Malformed` (with the `request_id` echoed) to a body that is too short, has bytes left over, holds a `bool` other than 0 or 1, an unknown enum value, invalid UTF-8 or over-long text. A request `type` it doesn't know gets `UnknownRequest`. A payload under 5 bytes has no readable `request_id`, so the Rig drops it, counts it in `malformed_frames` and the client times out.
+Every message has an exact layout. The Rig answers `Malformed` (with the `request_id` echoed) to a body that is too short, has bytes left over, holds a `bool` other than 0 or 1, an unknown enum value, invalid UTF-8, over-long text or a field outside its range given in [`messages.md`](messages.md). A request `type` it doesn't know gets `UnknownRequest`. A payload under 5 bytes has no readable `request_id`, so the Rig drops it, counts it in `malformed_frames` and the client times out.
 
-A `WriteChannels` whose body stops a byte short gets `Malformed`, with its `request_id` echoed:
+A `WriteChannels` with no Holder whose body stops a byte short gets `Malformed`, with its `request_id` echoed:
 
 ```hex
-03 78 56 34 12 01 80 01
+03 78 56 34 12 00 01 80 01
 ```
 
 ## Ordering
@@ -116,9 +116,23 @@ Every change sets an absolute state, so retrying a request is safe. The Rig keep
 
 ## Channel state
 
-Any client may read or change a Rig without acquiring permission, presenting a token or sending a heartbeat. A Mask write is applied as one operation; separate requests from different clients may interleave. A whole script is not exclusive (ADR 0007).
+Any client may read a Rig, and any client may change an unlocked one, without presenting a token or sending a heartbeat. A Mask write is applied as one operation. On an unlocked Rig, separate requests from different clients may interleave; a script that needs the Rig to itself Locks it (see [Locks](#locks)).
 
 A powered Rig retains its commanded Channel state when a script exits, crashes, sleeps or disconnects. Connecting, querying and closing a transport do not Clear it. Use `Clear` to turn every Channel off; power-up and Rig reset also Clear. Hardware supervision can temporarily hold Channels off during an expander fault and restores the commanded state after recovery, as described in [Expander faults](errors.md#expander-faults).
+
+## Locks
+
+A client may Lock a Rig under a Holder name, such as `alice@ws3`, so that nobody else's script can change it (ADR 0009). While a Rig is Locked, only requests carrying its Holder may change it; anyone may still look at it.
+
+- Every changing request (`WriteChannels`, `Clear`, `SetLabel`) starts with a `holder` field. Empty means no Holder. The Rig keeps no Lock state per connection, so a client sends its Holder on every change.
+- A changing request on a Locked Rig whose `holder` isn't the Holder, including an empty one, is refused with `Locked` and changes nothing. Its `detail` names the Holder for people to read. A client that needs the Holder reads it from `GetStatus`, never from `detail`.
+- `Hello`, `GetChannels`, `GetStatus` and `SetLogLevel` carry no Holder and are never refused for a Lock.
+- [`Lock`](messages.md#lock) Locks an unlocked Rig. The same Holder may Lock again with no effect, which is how a script that crashed or lost its connection picks its Lock back up. Another Holder is refused with `Locked`, unless it sets `takeover`, which hands the Lock to it: a Takeover. The old Holder's next change is then refused with `Locked` naming the new Holder.
+- [`ReleaseLock`](messages.md#releaselock) by the Holder unlocks the Rig. Anyone else is refused with `Locked`; a Takeover is the way to remove someone else's Lock. Releasing an unlocked Rig succeeds and changes nothing.
+- A Lock has no token, expiry or heartbeat. It lasts until its Holder releases it, someone takes it over or the Rig resets. It is never saved, so a Rig always boots unlocked.
+- Locking, releasing and taking over never change the Channels.
+
+A Holder name is a plain name, not a secret: the Lock guards against accidents, not bad actors. Clients should default it to something like `user@host`.
 
 ## Log delivery
 
@@ -128,11 +142,11 @@ A powered Rig retains its commanded Channel state when a script exits, crashes, 
 
 `Hello` reports one `protocol` number, bumped on any change to any message. Clients require an exact match and refuse anything else. There are no per-frame or per-message versions and no version negotiation. The common response header and the first `u16` of a successful `Hello` result are stable: read the protocol number before decoding the rest of its version-specific body, so a mismatch can be reported without first treating the body as malformed.
 
-The vectors file is named for the protocol it describes (`vectors-v2.json` for protocol 2).
+The vectors file is named for the protocol it describes (`vectors-v3.json` for protocol 3).
 
 ## Conformance vectors
 
-[`vectors-v2.json`](vectors-v2.json) is the one authority for the byte layout. Every codec must encode each message to exactly its payload and decode each payload to exactly its message.
+[`vectors-v3.json`](vectors-v3.json) is the one authority for the byte layout. Every codec must encode each message to exactly its payload and decode each payload to exactly its message.
 
 Conventions:
 
@@ -166,7 +180,7 @@ Every case has a `name`, unique within its section.
 
 **`malformed`:** `{ "name", "payload", "error" }`. A strict decoder rejects `payload`, and `error` names how:
 
-- `"Malformed"`: the payload breaks its byte table (too short, bytes left over, a bad `bool` or enum, invalid UTF-8, over-long text), or is an ok reply to an unknown request type.
+- `"Malformed"`: the payload breaks its byte table (too short, bytes left over, a bad `bool` or enum, invalid UTF-8, over-long text, a field out of its range such as an empty Holder in `Lock`), or is an ok reply to an unknown request type.
 - `"UnknownRequest"`: a request whose `type` names no request.
 
 A client rejects every case. A Rig, given a request case (`type` below `0x40`), answers with `error` as its `status` and the payload's `request_id` echoed, except that a payload under 5 bytes gets no reply and is counted in `malformed_frames`.

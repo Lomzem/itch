@@ -6,15 +6,15 @@ use std::time::{Duration, Instant};
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::SETTLE_MS;
 use itch_core::wire::{
-    ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request, Response, SetLabel,
-    StatusReply, WriteChannels,
+    ErrorCode, Event, HelloReply, Lock, LogEvent, LogLevel, Message, Reply, Request, Response,
+    SetLabel, StatusReply, WriteChannels,
 };
 
 #[test]
 fn answers_hello_over_tcp() {
     let sim = Sim::start();
     let hello = hello(&mut sim.connect(), 7);
-    assert_eq!(hello.protocol, 2);
+    assert_eq!(hello.protocol, 3);
     assert_eq!(hello.channel_count, 16);
     assert_eq!(hello.board_revision, "sim");
     assert!(hello.label.starts_with("itch-"), "{}", hello.label);
@@ -29,7 +29,7 @@ fn channel_state_survives_disconnects_and_is_shared_between_clients() {
         exchange(
             &mut first,
             1,
-            Request::WriteChannels(WriteChannels { mask: 0x0001, values: 0x0001 }),
+            Request::WriteChannels(WriteChannels { holder: "", mask: 0x0001, values: 0x0001 }),
         ),
         Response::Ok(Reply::WriteChannels { state: 0x0001 })
     );
@@ -37,7 +37,7 @@ fn channel_state_survives_disconnects_and_is_shared_between_clients() {
         exchange(
             &mut other,
             1,
-            Request::WriteChannels(WriteChannels { mask: 0x8000, values: 0x8000 }),
+            Request::WriteChannels(WriteChannels { holder: "", mask: 0x8000, values: 0x8000 }),
         ),
         Response::Ok(Reply::WriteChannels { state: 0x8001 })
     );
@@ -58,7 +58,7 @@ fn channel_state_survives_disconnects_and_is_shared_between_clients() {
         Response::Ok(Reply::GetChannels { state: 0x8001 })
     );
     assert_eq!(
-        exchange(&mut reconnected, 2, Request::Clear),
+        exchange(&mut reconnected, 2, Request::Clear { holder: "" }),
         Response::Ok(Reply::Clear { state: 0 })
     );
     assert_eq!(
@@ -105,7 +105,7 @@ fn sends_no_logs_by_default() {
 fn a_write_replies_after_the_contacts_settle() {
     let sim = Sim::start();
     let mut stream = sim.connect();
-    let write = WriteChannels { mask: 0x8001, values: 0x8001 };
+    let write = WriteChannels { holder: "", mask: 0x8001, values: 0x8001 };
     let started = Instant::now();
     let reply = exchange(&mut stream, 3, Request::WriteChannels(write));
     assert!(started.elapsed() >= Duration::from_millis(SETTLE_MS));
@@ -142,6 +142,7 @@ fn status_counts_bad_frames_from_every_connection() {
             dropped_logs: 0,
             expander_faults: 0,
             usb_tx_dropped: 0,
+            holder: "",
         }
     );
 }
@@ -150,7 +151,7 @@ fn status_counts_bad_frames_from_every_connection() {
 fn a_hardware_fault_holds_every_channel_off_and_refuses_writes() {
     let sim = Sim::start_with(&["--hardware-fault"]);
     let mut stream = sim.connect();
-    let write = WriteChannels { mask: 0x8001, values: 0x8001 };
+    let write = WriteChannels { holder: "", mask: 0x8001, values: 0x8001 };
     let reply = exchange(&mut stream, 1, Request::WriteChannels(write));
     assert!(matches!(reply, Response::Err { error: ErrorCode::HardwareFault, .. }), "{reply:?}");
     let reply = exchange(&mut stream, 2, Request::GetChannels);
@@ -178,7 +179,7 @@ fn a_hardware_fault_is_found_by_the_idle_tick() {
 #[test]
 fn a_label_lasts_for_the_run_unless_storage_faults() {
     let sim = Sim::start();
-    let set = |label| Request::SetLabel(SetLabel { label });
+    let set = |label| Request::SetLabel(SetLabel { holder: "", label });
     exchange(&mut sim.connect(), 1, set("bench3"));
     assert_eq!(hello(&mut sim.connect(), 2).label, "bench3");
 
@@ -187,6 +188,28 @@ fn a_label_lasts_for_the_run_unless_storage_faults() {
         panic!("the label was saved");
     };
     assert_eq!(error, ErrorCode::StorageFault);
+}
+
+#[test]
+fn a_lock_keeps_other_connections_from_changing_the_rig_until_taken_over() {
+    let sim = Sim::start();
+    let mut alice = sim.connect();
+    let mut bob = sim.connect();
+    let write =
+        |holder, values| Request::WriteChannels(WriteChannels { holder, mask: 0x0003, values });
+    let lock = |holder, takeover| Request::Lock(Lock { holder, takeover });
+    let locked = |detail| Response::Err { request_type: 0x03, error: ErrorCode::Locked, detail };
+
+    assert_eq!(exchange(&mut alice, 1, lock("alice", false)), Response::Ok(Reply::Lock));
+    assert_eq!(exchange(&mut bob, 1, write("bob", 0x0002)), locked("alice"));
+    assert_eq!(exchange(&mut bob, 2, lock("bob", true)), Response::Ok(Reply::Lock));
+    assert_eq!(exchange(&mut alice, 2, write("alice", 0x0001)), locked("bob"));
+    let release = Request::ReleaseLock { holder: "bob" };
+    assert_eq!(exchange(&mut bob, 3, release), Response::Ok(Reply::ReleaseLock));
+    assert_eq!(
+        exchange(&mut alice, 3, write("alice", 0x0001)),
+        Response::Ok(Reply::WriteChannels { state: 0x0001 })
+    );
 }
 
 struct Sim {

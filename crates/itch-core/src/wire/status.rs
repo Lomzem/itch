@@ -1,5 +1,5 @@
 use super::codec::{Reader, Writer};
-use super::{DecodeError, MAX_LAST_PANIC};
+use super::{DecodeError, MAX_HOLDER, MAX_LAST_PANIC};
 
 /// The `GetStatus` result. Counters count since boot and wrap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +15,8 @@ pub struct StatusReply<'a> {
     pub dropped_logs: u32,
     pub expander_faults: u32,
     pub usb_tx_dropped: u32,
+    /// Who holds the Lock. Empty = unlocked.
+    pub holder: &'a str,
 }
 
 impl<'a> StatusReply<'a> {
@@ -28,6 +30,7 @@ impl<'a> StatusReply<'a> {
         w.u32(self.dropped_logs);
         w.u32(self.expander_faults);
         w.u32(self.usb_tx_dropped);
+        w.text(self.holder);
     }
 
     pub(crate) fn decode(r: &mut Reader<'a>) -> Result<Self, DecodeError> {
@@ -41,6 +44,7 @@ impl<'a> StatusReply<'a> {
             dropped_logs: r.u32()?,
             expander_faults: r.u32()?,
             usb_tx_dropped: r.u32()?,
+            holder: r.text(MAX_HOLDER)?,
         })
     }
 }

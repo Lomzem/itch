@@ -45,7 +45,7 @@ Rig firmware supports USB only ([ADR 0006](docs/adr/0006-usb-only-rig-firmware.m
 Each [release](https://github.com/Lomzem/itch/releases) attaches:
 
 - `itch-sim-linux-x86_64` and `itch-sim-windows-x86_64.exe`: prebuilt simulators, so you can write scripts without a Rig or a Rust toolchain;
-- `vectors-v<protocol>.json`: the conformance vectors for that release (the current source uses `vectors-v2.json`);
+- `vectors-v<protocol>.json`: the conformance vectors for that release (the current source uses `vectors-v3.json`);
 - `manifest.json`: the release's tag, commit, `protocol` and the SHA-256 of every other asset.
 
 To cut a release, set `version` in `Cargo.toml` and push a matching `vX.Y.Z` tag. The release workflow runs the tests, builds the sims and publishes the release. Tags never move.

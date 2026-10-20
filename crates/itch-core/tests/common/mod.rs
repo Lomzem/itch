@@ -106,7 +106,7 @@ pub fn protocol_dir() -> PathBuf {
 }
 
 pub fn vectors() -> Value {
-    let text = std::fs::read_to_string(protocol_dir().join("vectors-v2.json")).unwrap();
+    let text = std::fs::read_to_string(protocol_dir().join("vectors-v3.json")).unwrap();
     serde_json::from_str(&text).unwrap()
 }
 

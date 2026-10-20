@@ -1,8 +1,9 @@
 use crate::board::{Board, StorageFault};
 use crate::frame::{FrameError, MAX_PAYLOAD};
+use crate::holder::Holder;
 use crate::label::Label;
 use crate::wire::{
-    CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, LogLevel, PROTOCOL, Reply, Request,
+    CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, Lock, LogLevel, PROTOCOL, Reply, Request,
     StatusReply, decode_request,
 };
 
@@ -33,6 +34,9 @@ pub trait LogControl {
 pub struct Rig {
     /// The label `Hello` reports.
     label: Label,
+    /// Who holds the Lock. `None` = unlocked. Never persisted, so a reset
+    /// unlocks the Rig.
+    holder: Option<Holder>,
     /// The commanded Channel state, bit 0 = CH1.
     channels: u16,
     /// Frames dropped for a bad CRC, truncated COBS or a wrong length.
@@ -57,6 +61,7 @@ impl Rig {
             .unwrap_or_else(|| Label::default_for(board.info().hardware_id));
         Self {
             label,
+            holder: None,
             channels: 0,
             crc_failures: 0,
             oversized_frames: 0,
@@ -113,6 +118,7 @@ impl Rig {
         let settle = matches!(result, Ok(Reply::WriteChannels { .. } | Reply::Clear { .. }));
         let response = match result {
             Ok(reply) => header.reply(reply),
+            Err(ErrorCode::Locked) => header.error(ErrorCode::Locked, self.holder()),
             Err(error) => header.error(error, ""),
         };
         Handled::Reply { len: response.encode(reply), settle }
@@ -162,18 +168,70 @@ impl Rig {
                     dropped_logs: counters.dropped_logs,
                     expander_faults: self.expander_faults,
                     usb_tx_dropped: counters.usb_tx_dropped,
+                    holder: self.holder(),
                 })
             }
             Request::WriteChannels(write) => {
+                self.check_lock(write.holder)?;
                 let state = self.channels & !write.mask | write.values & write.mask;
                 Reply::WriteChannels { state: self.write(board, state)? }
             }
-            Request::Clear => Reply::Clear { state: self.write(board, 0)? },
+            Request::Clear { holder } => {
+                self.check_lock(holder)?;
+                Reply::Clear { state: self.write(board, 0)? }
+            }
             Request::SetLabel(set) => {
+                self.check_lock(set.holder)?;
                 self.set_label(board, set.label)?;
                 Reply::SetLabel { label: self.label.as_str() }
             }
+            Request::Lock(lock) => {
+                self.lock(lock)?;
+                Reply::Lock
+            }
+            Request::ReleaseLock { holder } => {
+                self.release_lock(holder)?;
+                Reply::ReleaseLock
+            }
         })
+    }
+
+    /// The current Holder. Empty = unlocked.
+    fn holder(&self) -> &str {
+        self.holder.as_ref().map_or("", Holder::as_str)
+    }
+
+    /// Refuses a change from `holder` while someone else holds the Lock.
+    fn check_lock(&self, holder: &str) -> Result<(), ErrorCode> {
+        match &self.holder {
+            Some(current) if current.as_str() != holder => Err(ErrorCode::Locked),
+            _ => Ok(()),
+        }
+    }
+
+    /// Locks the Rig under `lock.holder`. Another Holder's Lock is refused
+    /// unless this is a Takeover.
+    fn lock(&mut self, lock: Lock) -> Result<(), ErrorCode> {
+        if !lock.takeover {
+            self.check_lock(lock.holder)?;
+        }
+        match self.holder() {
+            current if current == lock.holder => return Ok(()),
+            "" => log::info!("{} locked the Rig", lock.holder),
+            current => log::info!("{} took over the Lock from {current}", lock.holder),
+        }
+        self.holder = Some(Holder::new(lock.holder).expect("decoding caps holders at 64 bytes"));
+        Ok(())
+    }
+
+    /// Unlocks the Rig if `holder` holds the Lock. Only the Holder may
+    /// release it; releasing an unlocked Rig changes nothing.
+    fn release_lock(&mut self, holder: &str) -> Result<(), ErrorCode> {
+        self.check_lock(holder)?;
+        if self.holder.take().is_some() {
+            log::info!("{holder} released the Lock");
+        }
+        Ok(())
     }
 
     /// Saves `label` and reports it from now on. Empty, or the default by

@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "protocol": 2,
+  "protocol": 3,
   "messages": [
     {
       "name": "hello-request",
@@ -18,7 +18,7 @@
         "type": "Hello",
         "request_id": 305419896,
         "status": "Ok",
-        "protocol": 2,
+        "protocol": 3,
         "firmware_version": "1.0.0",
         "dirty": false,
         "channel_count": 16,
@@ -26,7 +26,7 @@
         "hardware_id": "60 55 f9 c0 27 18",
         "label": "itch-C02718"
       },
-      "payload": "81 78 56 34 12 00 02 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38"
+      "payload": "81 78 56 34 12 00 03 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38"
     },
     {
       "name": "hello-error",
@@ -65,10 +65,23 @@
         "kind": "request",
         "type": "WriteChannels",
         "request_id": 305419896,
+        "holder": "alice@ws3",
         "mask": 5,
         "values": 1
       },
-      "payload": "03 78 56 34 12 05 00 01 00"
+      "payload": "03 78 56 34 12 09 61 6c 69 63 65 40 77 73 33 05 00 01 00"
+    },
+    {
+      "name": "write-channels-request-no-holder",
+      "message": {
+        "kind": "request",
+        "type": "WriteChannels",
+        "request_id": 305419896,
+        "holder": "",
+        "mask": 5,
+        "values": 1
+      },
+      "payload": "03 78 56 34 12 00 05 00 01 00"
     },
     {
       "name": "write-channels-ok",
@@ -82,13 +95,25 @@
       "payload": "83 78 56 34 12 00 01 80"
     },
     {
+      "name": "write-channels-locked",
+      "message": {
+        "kind": "response",
+        "type": "WriteChannels",
+        "request_id": 305419896,
+        "status": "Locked",
+        "detail": "bob@ws7"
+      },
+      "payload": "83 78 56 34 12 0b 07 62 6f 62 40 77 73 37"
+    },
+    {
       "name": "clear-request",
       "message": {
         "kind": "request",
         "type": "Clear",
-        "request_id": 305419896
+        "request_id": 305419896,
+        "holder": "alice@ws3"
       },
-      "payload": "04 78 56 34 12"
+      "payload": "04 78 56 34 12 09 61 6c 69 63 65 40 77 73 33"
     },
     {
       "name": "clear-ok",
@@ -125,9 +150,10 @@
         "malformed_frames": 3,
         "dropped_logs": 4,
         "expander_faults": 5,
-        "usb_tx_dropped": 6
+        "usb_tx_dropped": 6,
+        "holder": "alice@ws3"
       },
-      "payload": "85 78 56 34 12 00 f8 ce 38 00 00 00 00 00 03 10 73 72 63 2f 6d 61 69 6e 2e 72 73 3a 38 38 3a 35 01 00 00 00 02 00 00 00 03 00 00 00 04 00 00 00 05 00 00 00 06 00 00 00"
+      "payload": "85 78 56 34 12 00 f8 ce 38 00 00 00 00 00 03 10 73 72 63 2f 6d 61 69 6e 2e 72 73 3a 38 38 3a 35 01 00 00 00 02 00 00 00 03 00 00 00 04 00 00 00 05 00 00 00 06 00 00 00 09 61 6c 69 63 65 40 77 73 33"
     },
     {
       "name": "get-status-ok-fresh-boot",
@@ -144,9 +170,10 @@
         "malformed_frames": 0,
         "dropped_logs": 0,
         "expander_faults": 0,
-        "usb_tx_dropped": 0
+        "usb_tx_dropped": 0,
+        "holder": ""
       },
-      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
     },
     {
       "name": "set-label-request",
@@ -154,9 +181,10 @@
         "kind": "request",
         "type": "SetLabel",
         "request_id": 305419896,
+        "holder": "alice@ws3",
         "label": "bench3"
       },
-      "payload": "06 78 56 34 12 06 62 65 6e 63 68 33"
+      "payload": "06 78 56 34 12 09 61 6c 69 63 65 40 77 73 33 06 62 65 6e 63 68 33"
     },
     {
       "name": "set-label-restore-default-request",
@@ -164,9 +192,10 @@
         "kind": "request",
         "type": "SetLabel",
         "request_id": 305419896,
+        "holder": "",
         "label": ""
       },
-      "payload": "06 78 56 34 12 00"
+      "payload": "06 78 56 34 12 00 00"
     },
     {
       "name": "set-label-ok",
@@ -222,6 +251,69 @@
       "payload": "87 78 56 34 12 00"
     },
     {
+      "name": "lock-request",
+      "message": {
+        "kind": "request",
+        "type": "Lock",
+        "request_id": 305419896,
+        "holder": "alice@ws3",
+        "takeover": false
+      },
+      "payload": "0b 78 56 34 12 09 61 6c 69 63 65 40 77 73 33 00"
+    },
+    {
+      "name": "lock-takeover-request",
+      "message": {
+        "kind": "request",
+        "type": "Lock",
+        "request_id": 305419896,
+        "holder": "bob@ws7",
+        "takeover": true
+      },
+      "payload": "0b 78 56 34 12 07 62 6f 62 40 77 73 37 01"
+    },
+    {
+      "name": "lock-ok",
+      "message": {
+        "kind": "response",
+        "type": "Lock",
+        "request_id": 305419896,
+        "status": "Ok"
+      },
+      "payload": "8b 78 56 34 12 00"
+    },
+    {
+      "name": "lock-locked",
+      "message": {
+        "kind": "response",
+        "type": "Lock",
+        "request_id": 305419896,
+        "status": "Locked",
+        "detail": "alice@ws3"
+      },
+      "payload": "8b 78 56 34 12 0b 09 61 6c 69 63 65 40 77 73 33"
+    },
+    {
+      "name": "release-lock-request",
+      "message": {
+        "kind": "request",
+        "type": "ReleaseLock",
+        "request_id": 305419896,
+        "holder": "alice@ws3"
+      },
+      "payload": "0c 78 56 34 12 09 61 6c 69 63 65 40 77 73 33"
+    },
+    {
+      "name": "release-lock-ok",
+      "message": {
+        "kind": "response",
+        "type": "ReleaseLock",
+        "request_id": 305419896,
+        "status": "Ok"
+      },
+      "payload": "8c 78 56 34 12 00"
+    },
+    {
       "name": "log-event",
       "message": {
         "kind": "event",
@@ -241,8 +333,8 @@
     },
     {
       "name": "hello-ok",
-      "payload": "81 78 56 34 12 00 02 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38",
-      "frame": "00 02 24 06 81 78 56 34 12 02 02 07 05 31 2e 30 2e 30 18 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38 73 94 00"
+      "payload": "81 78 56 34 12 00 03 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38",
+      "frame": "00 02 24 06 81 78 56 34 12 02 03 07 05 31 2e 30 2e 30 18 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38 6c 9d 00"
     },
     {
       "name": "empty-payload",
@@ -318,7 +410,7 @@
     },
     {
       "name": "mid-stream-join",
-      "stream": "41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38 73 94 00 00 02 05 08 01 78 56 34 12 c2 f2 00",
+      "stream": "41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38 6c 9d 00 00 02 05 08 01 78 56 34 12 c2 f2 00",
       "payloads": [
         "01 78 56 34 12"
       ],
@@ -339,27 +431,47 @@
     },
     {
       "name": "write-channels-short-body",
-      "payload": "03 78 56 34 12 01 80 01",
+      "payload": "03 78 56 34 12 00 01 80 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "write-channels-holder-over-64-bytes",
+      "payload": "03 78 56 34 12 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 05 00 01 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "write-channels-holder-invalid-utf8",
+      "payload": "03 78 56 34 12 02 c3 28 05 00 01 00",
       "error": "Malformed"
     },
     {
       "name": "clear-trailing-byte",
-      "payload": "04 78 56 34 12 00",
+      "payload": "04 78 56 34 12 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "clear-holder-longer-than-body",
+      "payload": "04 78 56 34 12 09 61 6c 69",
       "error": "Malformed"
     },
     {
       "name": "set-label-label-longer-than-body",
-      "payload": "06 78 56 34 12 0c 71 61",
+      "payload": "06 78 56 34 12 00 0c 71 61",
       "error": "Malformed"
     },
     {
       "name": "set-label-label-over-64-bytes",
-      "payload": "06 78 56 34 12 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61",
+      "payload": "06 78 56 34 12 00 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61",
       "error": "Malformed"
     },
     {
       "name": "set-label-label-invalid-utf8",
-      "payload": "06 78 56 34 12 02 c3 28",
+      "payload": "06 78 56 34 12 00 02 c3 28",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-label-holder-over-64-bytes",
+      "payload": "06 78 56 34 12 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 06 62 65 6e 63 68 33",
       "error": "Malformed"
     },
     {
@@ -374,32 +486,42 @@
     },
     {
       "name": "hello-ok-short-body",
-      "payload": "81 78 56 34 12 00 02 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31",
+      "payload": "81 78 56 34 12 00 03 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31",
       "error": "Malformed"
     },
     {
       "name": "hello-ok-trailing-byte",
-      "payload": "81 78 56 34 12 00 02 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38 00",
+      "payload": "81 78 56 34 12 00 03 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38 00",
       "error": "Malformed"
     },
     {
       "name": "hello-ok-bad-bool",
-      "payload": "81 78 56 34 12 00 02 00 05 31 2e 30 2e 30 02 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38",
+      "payload": "81 78 56 34 12 00 03 00 05 31 2e 30 2e 30 02 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38",
       "error": "Malformed"
     },
     {
       "name": "hello-ok-label-invalid-utf8",
-      "payload": "81 78 56 34 12 00 02 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 02 c3 28",
+      "payload": "81 78 56 34 12 00 03 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 02 c3 28",
       "error": "Malformed"
     },
     {
       "name": "hello-ok-label-over-64-bytes",
-      "payload": "81 78 56 34 12 00 02 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61",
+      "payload": "81 78 56 34 12 00 03 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61",
       "error": "Malformed"
     },
     {
       "name": "get-status-ok-last-panic-over-64-bytes",
-      "payload": "85 78 56 34 12 00 01 00 00 00 00 00 00 00 01 41 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "payload": "85 78 56 34 12 00 01 00 00 00 00 00 00 00 01 41 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-holder-over-64-bytes",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-without-holder",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
       "error": "Malformed"
     },
     {
@@ -420,6 +542,41 @@
     {
       "name": "set-log-level-above-debug",
       "payload": "07 78 56 34 12 05",
+      "error": "Malformed"
+    },
+    {
+      "name": "lock-empty-holder",
+      "payload": "0b 78 56 34 12 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "lock-holder-over-64-bytes",
+      "payload": "0b 78 56 34 12 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "lock-takeover-bad-bool",
+      "payload": "0b 78 56 34 12 09 61 6c 69 63 65 40 77 73 33 02",
+      "error": "Malformed"
+    },
+    {
+      "name": "lock-without-takeover",
+      "payload": "0b 78 56 34 12 09 61 6c 69 63 65 40 77 73 33",
+      "error": "Malformed"
+    },
+    {
+      "name": "release-lock-holder-over-64-bytes",
+      "payload": "0c 78 56 34 12 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61",
+      "error": "Malformed"
+    },
+    {
+      "name": "release-lock-trailing-byte",
+      "payload": "0c 78 56 34 12 09 61 6c 69 63 65 40 77 73 33 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "lock-ok-trailing-byte",
+      "payload": "8b 78 56 34 12 00 00",
       "error": "Malformed"
     },
     {

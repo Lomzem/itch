@@ -10,7 +10,7 @@ Bench checks for an itch Rig: an ESP32-S3 driving 16 Channels (CH1–16) through
 
 The examples use a made-up Rig with Hardware ID `60:55:F9:C0:27:18`, so its default label is `itch-C02718`. No DUT is needed: check the contacts themselves with a meter or a logic analyser.
 
-Use a client adapted to [protocol 2](../protocol/README.md); older released clients use the former wire layout. Client interface examples below illustrate the bench actions, while the wire contract lives in `docs/protocol/`.
+Use a client adapted to [protocol 3](../protocol/README.md); older released clients use the former wire layout. Client interface examples below illustrate the bench actions, while the wire contract lives in `docs/protocol/`.
 
 ## Tools
 

@@ -240,7 +240,11 @@ fn a_channel_write_is_answered_once_the_contacts_have_settled() {
     let usb = connections.connect(0);
     let mut rig = pin!(serve(&mut bench.rig, &mut bench.board, connections, &BenchClock));
 
-    send(usb, 1, Request::WriteChannels(WriteChannels { mask: 0x0001, values: 0x0001 }));
+    send(
+        usb,
+        1,
+        Request::WriteChannels(WriteChannels { holder: "", mask: 0x0001, values: 0x0001 }),
+    );
     run(rig.as_mut());
     assert_eq!(bench.expander.borrow().driven(), (0x00, 0x80), "CH1 on");
     advance(SETTLE_MS - 1);
@@ -258,7 +262,11 @@ fn the_idle_tick_restores_channels_an_expander_lost() {
     let connections = connections::<1>();
     let usb = connections.connect(0);
     let mut rig = pin!(serve(&mut bench.rig, &mut bench.board, connections, &BenchClock));
-    send(usb, 1, Request::WriteChannels(WriteChannels { mask: 0x0001, values: 0x0001 }));
+    send(
+        usb,
+        1,
+        Request::WriteChannels(WriteChannels { holder: "", mask: 0x0001, values: 0x0001 }),
+    );
     run(rig.as_mut());
     advance(SETTLE_MS);
     run(rig.as_mut());
