@@ -20,7 +20,7 @@ Use a client adapted to [protocol 3](../protocol/README.md); older released clie
 - A jumper wire to short SDA (GPIO5) or the expander RESET (GPIO6) to GND.
 - A second Rig, for the discovery checks.
 - For mDNS, `avahi-utils` on the Linux PC (`avahi-browse`, `avahi-resolve`), and Bonjour's `dns-sd` on the Windows PC.
-- For the Wi-Fi items: a WPA2-Personal access point you can reboot and switch off, running DHCP on a network the Linux PC can reach, and a second network to move a Rig to (a second SSID on the same access point will do). The examples call them `ExampleRigNet` and `ExampleRigNet2` and use addresses from `192.0.2.0/24`; use your own.
+- For the Wi-Fi items: a WPA2-Personal access point you can reboot and switch off, running DHCP on a network the Linux PC can reach, and a second network to move a Rig to, which the Linux PC must also reach (a second SSID on the same access point will do, if it is routed to the PC). The examples call them `ExampleRigNet` and `ExampleRigNet2` and use addresses from `192.0.2.0/24`; use your own.
 
 ## Where the tunable figures live
 
@@ -206,7 +206,7 @@ Setup: the test pattern from item 6 (CH1 and CH16 on), with the meter or logic a
 
 ## 20. Connection limit
 
-- **Method:** open four TCP connections and send `Hello` on each. Open a fifth. Close one of the four and open another. Then open a fourth again from a laptop and take the laptop off the network without closing the connection, and keep trying a new connection from the PC.
+- **Method:** open four TCP connections and send `Hello` on each. Open a fifth. Close one of the four and open another. Close one again, then open a fourth from a laptop and take the laptop off the network without closing the connection, and keep trying a new connection from the PC.
 - **Pass:** the fifth connection is refused at once (connection refused or reset), and the four and USB keep working. After one closes, the next connection is served. The laptop's place frees up within about 20 s, after which a new connection is served.
 - **If it fails:** each `tcp` task in `crates/itch-firmware/src/tcp.rs` listens only while its slot is free, so with all four in use the network stack refuses the fifth. A vanished client is dropped by `KEEP_ALIVE` and `TIMEOUT`, in the same file.
 
