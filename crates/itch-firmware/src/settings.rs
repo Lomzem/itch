@@ -14,8 +14,6 @@ use sequential_storage::Error;
 use sequential_storage::cache::{Cache, Uncached};
 use sequential_storage::map::{MapConfig, MapStorage};
 
-use crate::supervisor;
-
 /// The settings partition in `partitions.csv`, as flash addresses. It sits
 /// after the app partition, so a merged image without padding stops short
 /// of it.
@@ -77,10 +75,10 @@ pub struct Settings<F: NorFlash> {
 }
 
 impl<F: NorFlash> Settings<F> {
-    /// `now` is the time in ms since boot, for `rig`'s check-ins.
-    pub fn new(flash: F, now: fn() -> u64) -> Self {
+    /// `check_in` checks `rig` in with the supervisor at a time `now` gave.
+    pub fn new(flash: F, now: fn() -> u64, check_in: fn(u64)) -> Self {
         let map = MapStorage::new(
-            BlockingAsync::new(Supervised { flash, now }),
+            BlockingAsync::new(Supervised { flash, now, check_in }),
             MapConfig::new(PARTITION),
             Cache::new_uncached(),
         );
@@ -120,6 +118,7 @@ impl<F: NorFlash> Settings<F> {
 struct Supervised<F> {
     flash: F,
     now: fn() -> u64,
+    check_in: fn(u64),
 }
 
 impl<F: ErrorType> ErrorType for Supervised<F> {
@@ -156,9 +155,9 @@ impl<F: NorFlash> NorFlash for Supervised<F> {
 
 impl<F> Supervised<F> {
     fn supervised<T>(&mut self, stall: impl FnOnce(&mut F) -> T) -> T {
-        supervisor::check_in((self.now)());
+        (self.check_in)((self.now)());
         let result = stall(&mut self.flash);
-        supervisor::check_in((self.now)());
+        (self.check_in)((self.now)());
         result
     }
 }

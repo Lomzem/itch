@@ -1,8 +1,9 @@
 mod common;
 
-use common::{Bench, IODIRA, OLATA, Op};
+use common::{Bench, IODIRA, OLATA, Op, advance};
 use itch_core::board::{Board, HwFault};
 use itch_core::wire::FEATURE_WIFI;
+use itch_firmware::supervisor::{Check, DEADLINE_MS};
 
 #[test]
 fn each_channel_drives_its_contact_on_the_reversed_rev_a_wiring() {
@@ -150,7 +151,8 @@ fn a_restore_that_fails_after_the_expander_comes_back_holds_it_in_reset() {
 fn once_the_supervisor_trips_the_expander_stays_in_reset() {
     let mut bench = Bench::boot();
     bench.write(0xFFFF, 0x0181);
-    bench.trip_supervisor();
+    advance(DEADLINE_MS);
+    assert_eq!(bench.supervise(), Check::Missed);
     bench.tick();
     bench.tick();
     assert!(bench.expander.borrow().in_reset());

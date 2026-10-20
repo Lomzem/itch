@@ -23,21 +23,18 @@ use esp_hal::rtc_cntl::Rwdt;
 /// How long `rig` may go without checking in.
 pub const DEADLINE_MS: u64 = 1000;
 
-/// When `rig` last checked in, in ms since boot. It wraps after 49 days:
-/// the chip has no 64-bit atomics.
-pub static LAST_CHECK_IN: AtomicU32 = AtomicU32::new(0);
-
 /// Set once `rig` misses its deadline.
 pub static TRIPPED: Latch = Latch::new();
 
-/// The supervisor of the `rig` task.
-pub static SUPERVISOR: Supervisor<'static> = Supervisor::new(&TRIPPED, &LAST_CHECK_IN);
+/// The supervisor of the `rig` task, on the chip's watchdog and RESET line.
+#[cfg(feature = "firmware")]
+pub static SUPERVISOR: Supervisor<'static, ChipFailsafe> = Supervisor::new(&TRIPPED, ChipFailsafe);
 
 /// Called by `rig` on every idle tick and around every flash stall, at
-/// `now` ms since boot. A check-in in time feeds the watchdog; a late one
-/// is a miss.
+/// `now` ms since boot.
+#[cfg(feature = "firmware")]
 pub fn check_in(now: u64) {
-    act(SUPERVISOR.check_in(now));
+    SUPERVISOR.check_in(now);
 }
 
 /// A failure flag that only a reset clears.
@@ -93,22 +90,47 @@ impl<P: OutputPin> OutputPin for ResetLine<'_, P> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Check {
-    /// `rig` checked in within its deadline: feed the watchdog.
+    /// `rig` is within its deadline: the watchdog was fed.
     Fresh,
-    /// `rig` missed its deadline, now or before: keep RESET low and let
-    /// the watchdog fire.
+    /// `rig` missed its deadline, now or before: RESET is held low and the
+    /// watchdog will fire.
     Missed,
 }
 
-/// Tracks `rig`'s check-ins against its deadline.
-pub struct Supervisor<'a> {
-    latch: &'a Latch,
-    last_check_in: &'a AtomicU32,
+/// What the supervisor acts through.
+pub trait Failsafe {
+    /// Feeds the watchdog: `rig` is in time.
+    fn feed(&self);
+
+    /// Drives the expander RESET low: `rig` missed its deadline. It may run
+    /// while the RESET line's owner is mid-call.
+    fn force_reset_low(&self);
 }
 
-impl<'a> Supervisor<'a> {
-    pub const fn new(latch: &'a Latch, last_check_in: &'a AtomicU32) -> Self {
-        Self { latch, last_check_in }
+impl<F: Failsafe + ?Sized> Failsafe for &F {
+    fn feed(&self) {
+        (**self).feed();
+    }
+
+    fn force_reset_low(&self) {
+        (**self).force_reset_low();
+    }
+}
+
+/// Tracks `rig`'s check-ins against its deadline and acts on every check:
+/// it feeds the watchdog while `rig` is in time, and after a miss holds the
+/// expander in reset and stops feeding, so the watchdog resets the chip.
+pub struct Supervisor<'a, F> {
+    latch: &'a Latch,
+    /// When `rig` last checked in, in ms since boot. It wraps after 49
+    /// days: the chip has no 64-bit atomics.
+    last_check_in: AtomicU32,
+    failsafe: F,
+}
+
+impl<'a, F: Failsafe> Supervisor<'a, F> {
+    pub const fn new(latch: &'a Latch, failsafe: F) -> Self {
+        Self { latch, last_check_in: AtomicU32::new(0), failsafe }
     }
 
     /// Starts the deadline at `now`, before `rig`'s first check-in.
@@ -132,7 +154,13 @@ impl<'a> Supervisor<'a> {
         if u64::from((now as u32).wrapping_sub(last_check_in)) >= DEADLINE_MS {
             self.latch.trip();
         }
-        if self.latch.tripped() { Check::Missed } else { Check::Fresh }
+        if self.latch.tripped() {
+            self.failsafe.force_reset_low();
+            Check::Missed
+        } else {
+            self.failsafe.feed();
+            Check::Fresh
+        }
     }
 }
 
@@ -141,22 +169,25 @@ impl<'a> Supervisor<'a> {
 static WATCHDOG: Mutex<CriticalSectionRawMutex, RefCell<Option<Rwdt>>> =
     Mutex::new(RefCell::new(None));
 
-/// Feeds the watchdog while `rig` is in time. After a miss it holds the
-/// expander in reset and stops feeding, so the watchdog resets the chip.
+/// The chip's RTC watchdog, once the supervisor has it, and the expander
+/// RESET GPIO.
 #[cfg(feature = "firmware")]
-fn act(check: Check) {
-    match check {
-        Check::Fresh => WATCHDOG.lock(|watchdog| {
+pub struct ChipFailsafe;
+
+#[cfg(feature = "firmware")]
+impl Failsafe for ChipFailsafe {
+    fn feed(&self) {
+        WATCHDOG.lock(|watchdog| {
             if let Some(watchdog) = watchdog.borrow_mut().as_mut() {
                 watchdog.feed();
             }
-        }),
-        Check::Missed => crate::board::force_reset_low(),
+        });
+    }
+
+    fn force_reset_low(&self) {
+        crate::board::force_reset_low();
     }
 }
-
-#[cfg(not(feature = "firmware"))]
-fn act(_: Check) {}
 
 /// Checks on `rig` between its check-ins, which catches a `rig` that
 /// stopped checking in at all.
@@ -173,7 +204,7 @@ pub async fn supervisor(watchdog: Rwdt) {
     SUPERVISOR.start(now());
     let mut ticker = Ticker::every(PERIOD);
     loop {
-        act(SUPERVISOR.check(now()));
+        SUPERVISOR.check(now());
         ticker.next().await;
     }
 }
