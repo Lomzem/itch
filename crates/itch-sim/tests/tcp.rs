@@ -1,4 +1,4 @@
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -65,6 +65,28 @@ fn channel_state_survives_disconnects_and_is_shared_between_clients() {
         exchange(&mut sim.connect(), 1, Request::GetChannels),
         Response::Ok(Reply::GetChannels { state: 0 })
     );
+}
+
+#[test]
+fn a_fifth_connection_is_closed_at_once_until_another_ends() {
+    let sim = Sim::start();
+    let mut open: Vec<TcpStream> = (0..4).map(|_| sim.connect()).collect();
+    for (request_id, stream) in (1..).zip(&mut open) {
+        hello(stream, request_id);
+    }
+
+    let mut fifth = sim.connect();
+    // The sim may close it before or after this write arrives.
+    let _ = fifth.write_all(&request(5, Request::Hello));
+    match fifth.read(&mut [0; MAX_FRAME]) {
+        Ok(0) => {}
+        Err(err)
+            if matches!(err.kind(), ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted) => {}
+        other => panic!("the fifth connection was served: {other:?}"),
+    }
+
+    disconnect(open.pop().unwrap());
+    hello(&mut sim.connect(), 6);
 }
 
 #[test]

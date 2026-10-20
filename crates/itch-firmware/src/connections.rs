@@ -24,9 +24,12 @@ pub const DEPTH: usize = 4;
 /// many short ones.
 const LOG_BYTES: usize = 4 * 1024;
 
-/// The Rig's connections: USB alone, for now.
+/// How many TCP connections the Rig serves at once, beside USB.
+pub const TCP_CONNECTIONS: usize = 4;
+
+/// The Rig's connections: USB's slot, then one for each TCP connection.
 #[cfg(feature = "firmware")]
-pub static CONNECTIONS: Connections<1> = Connections::new();
+pub static CONNECTIONS: Connections<{ 1 + TCP_CONNECTIONS }> = Connections::new();
 
 /// USB's slot. It serves one connection for the life of the boot.
 pub const USB: usize = 0;

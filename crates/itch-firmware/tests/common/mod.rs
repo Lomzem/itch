@@ -17,12 +17,13 @@ use itch_core::board::{Board, Counters};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, LogControl, Rig};
 use itch_core::wire::{
-    LogLevel, Message, Reply, Request, Response, SetLabel, SetWifi, WriteChannels,
+    Link, LogLevel, Message, Reply, Request, Response, SetLabel, SetWifi, WriteChannels,
 };
 use itch_firmware::board::{Chip, RevA};
 use itch_firmware::serve::Clock;
 use itch_firmware::settings::PARTITION;
 use itch_firmware::supervisor::{Check, Failsafe, Latch, ResetLine, Supervisor};
+use itch_firmware::wifi::Wifi;
 use sequential_storage::cache::Cache;
 use sequential_storage::map::{MapConfig, MapStorage};
 
@@ -413,6 +414,9 @@ pub struct Bench {
     pub expander: Rc<RefCell<Expander>>,
     pub flash: Rc<RefCell<Flash>>,
     led: Rc<Cell<bool>>,
+    /// What the radio and the network stack tell the board, and the
+    /// credentials the board hands the radio.
+    pub wifi: &'static Wifi,
     pub board: FakeRevA,
     pub rig: Rig,
 }
@@ -428,6 +432,7 @@ impl Bench {
         let expander = Rc::new(RefCell::new(Expander::power_on()));
         let led = Rc::new(Cell::new(false));
         let latch = Box::leak(Box::new(Latch::new()));
+        let wifi = Box::leak(Box::new(Wifi::new()));
         let mut board = RevA::new(
             Bus(Rc::clone(&expander)),
             ResetLine::new(ResetPin(Rc::clone(&expander)), latch),
@@ -441,13 +446,14 @@ impl Bench {
                 now,
                 check_in,
                 counters: Counters::default,
+                wifi,
             },
         );
         let supervisor = Supervisor::new(latch, BenchFailsafe(Rc::clone(&expander)));
         supervisor.start(now());
         SUPERVISOR.with(|cell| cell.replace(Some(Rc::new(supervisor))));
         let rig = Rig::new(&mut board);
-        Self { expander, flash, led, board, rig }
+        Self { expander, flash, led, wifi, board, rig }
     }
 
     /// Powers up and brings the expander up, as the firmware does at boot.
@@ -508,6 +514,15 @@ impl Bench {
     pub fn wifi(&mut self) -> Option<String> {
         self.request(Request::GetStatus, |reply| match reply {
             Reply::GetStatus(status) => status.wifi_configured.then(|| status.ssid.to_owned()),
+            reply => panic!("not a GetStatus reply: {reply:?}"),
+        })
+        .expect("GetStatus succeeds")
+    }
+
+    /// The Wi-Fi link and current address `GetStatus` reports.
+    pub fn network(&mut self) -> (Link, [u8; 4]) {
+        self.request(Request::GetStatus, |reply| match reply {
+            Reply::GetStatus(status) => (status.link, status.current_address),
             reply => panic!("not a GetStatus reply: {reply:?}"),
         })
         .expect("GetStatus succeeds")

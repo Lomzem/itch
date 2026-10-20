@@ -18,3 +18,7 @@ inherits = "release"
 opt-level = "s"
 lto = "fat"
 codegen-units = 1
+
+# esp-radio is too slow for Wi-Fi at opt-level "s".
+[profile.firmware.package.esp-radio]
+opt-level = 3

@@ -13,7 +13,7 @@ use itch_core::rig::Rig;
 use itch_firmware::board::{self, RealBoard};
 use itch_firmware::connections::{CONNECTIONS, USB};
 use itch_firmware::serve::{Clock, serve};
-use itch_firmware::{logger, supervisor, usb};
+use itch_firmware::{logger, radio, supervisor, usb};
 use static_cell::StaticCell;
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -25,7 +25,7 @@ static PANICKED: AtomicBool = AtomicBool::new(false);
 
 #[esp_hal::main]
 fn main() -> ! {
-    let board::Parts { mut board, watchdog, usb_rx, usb_tx } = board::boot();
+    let board::Parts { mut board, watchdog, usb_rx, usb_tx, radio } = board::boot();
     logger::init();
     let last_panic = board.info().last_panic;
     if !last_panic.is_empty() {
@@ -36,11 +36,14 @@ fn main() -> ! {
         if board.reinit().is_err() {
             log::error!("the expander didn't come up; holding it in reset");
         }
+        let credentials = board.load_wifi();
         spawner.spawn(supervisor::supervisor(watchdog).unwrap());
         let usb = CONNECTIONS.connect(USB);
         spawner.spawn(rig(rig_logic, board).unwrap());
         spawner.spawn(usb::usb_rx(usb_rx, usb).unwrap());
         spawner.spawn(usb::usb_tx(usb_tx, usb).unwrap());
+        // After USB, which keeps working whatever the radio does.
+        radio::start(spawner, radio, credentials);
     })
 }
 
