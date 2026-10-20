@@ -7,17 +7,31 @@ pub use fake_board::FakeBoard;
 
 use std::path::PathBuf;
 
-use itch_core::frame::MAX_PAYLOAD;
-use itch_core::rig::{Handled, Rig};
-use itch_core::wire::{ErrorCode, Message, Reply, Request, Response};
+use std::cell::Cell;
+
+use itch_core::frame::{FrameError, MAX_PAYLOAD};
+use itch_core::rig::{Connection, Handled, Rig};
+use itch_core::wire::{ErrorCode, LogLevel, Message, Reply, Request, Response};
 use serde_json::Value;
 
-/// A Rig on a `FakeBoard`, kept across requests.
+/// A Rig on a `FakeBoard`, kept across requests, all on one connection.
 pub struct TestRig {
     pub rig: Rig,
     pub board: FakeBoard,
-    /// Whether the last reply waited out relay settling.
-    pub settled: bool,
+    pub connection: TestConnection,
+    /// Whether the Rig had the last reply wait out relay settling.
+    pub settle: bool,
+}
+
+/// A connection that only remembers its log level.
+pub struct TestConnection {
+    pub log_level: Cell<LogLevel>,
+}
+
+impl Connection for TestConnection {
+    fn set_log_level(&self, level: LogLevel) {
+        self.log_level.set(level);
+    }
 }
 
 impl TestRig {
@@ -27,7 +41,8 @@ impl TestRig {
 
     /// Boots a Rig on `board`.
     pub fn on(mut board: FakeBoard) -> Self {
-        Self { rig: Rig::new(&mut board), board, settled: false }
+        let connection = TestConnection { log_level: Cell::new(LogLevel::Off) };
+        Self { rig: Rig::new(&mut board), board, connection, settle: false }
     }
 
     /// Runs one idle tick.
@@ -48,15 +63,17 @@ impl TestRig {
 
     /// Sends a raw payload and returns the reply payload, if any.
     pub fn raw(&mut self, payload: &[u8]) -> Option<Vec<u8>> {
+        self.receive(Ok(payload))
+    }
+
+    /// Hands the Rig a frame as the decoder gave it, payload or error, and
+    /// returns the reply payload, if any.
+    pub fn receive(&mut self, frame: Result<&[u8], FrameError>) -> Option<Vec<u8>> {
         let mut reply = [0; MAX_PAYLOAD];
-        match self.rig.handle(payload, &mut self.board, &mut reply) {
+        match self.rig.receive(frame, &mut self.board, &self.connection, &mut reply) {
             Handled::NoReply => None,
             Handled::Reply { len, settle } => {
-                self.settled = settle;
-                Some(reply[..len].to_vec())
-            }
-            Handled::SetLogLevel { len, .. } => {
-                self.settled = false;
+                self.settle = settle;
                 Some(reply[..len].to_vec())
             }
         }

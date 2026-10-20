@@ -2,8 +2,6 @@
 
 #[cfg(feature = "firmware")]
 use core::cell::RefCell;
-#[cfg(feature = "firmware")]
-use core::sync::atomic::{AtomicU32, Ordering};
 
 #[cfg(feature = "firmware")]
 use embassy_futures::select::select;
@@ -20,6 +18,10 @@ use itch_core::frame::MAX_PAYLOAD;
 use itch_core::frame::{FrameError, MAX_FRAME, encode_frame};
 #[cfg(feature = "firmware")]
 use itch_core::logs::LogQueue;
+#[cfg(feature = "firmware")]
+use itch_core::rig::Connection;
+#[cfg(feature = "firmware")]
+use itch_core::wire::LogLevel;
 use itch_core::wire::{ErrorCode, decode_request};
 
 /// How many requests may wait for the `rig` task. A transport answers
@@ -70,45 +72,38 @@ pub async fn next_frame<const N: usize>(
     }
 }
 
-/// Frames dropped for a bad CRC, on any transport: the Rig's `crc_failures`
-/// counter.
-#[cfg(feature = "firmware")]
-pub static CRC_FAILURES: AtomicU32 = AtomicU32::new(0);
-
-/// Frames dropped for being oversized, on any transport: `oversized_frames`.
-#[cfg(feature = "firmware")]
-pub static OVERSIZED_FRAMES: AtomicU32 = AtomicU32::new(0);
-
-/// Queues a frame a transport decoded, or counts why it was dropped. A
-/// request that finds the queue full is answered `Busy` at once.
+/// Queues a frame a transport decoded, payload or error, for the Rig. A
+/// request that finds the queue full is answered `Busy` at once; a dropped
+/// frame that finds it full goes uncounted.
 #[cfg(feature = "firmware")]
 pub fn receive(transport: Transport, frame: Result<&[u8], FrameError>, replies: &Replies) {
-    let payload = match frame {
-        Ok(payload) => payload,
-        Err(FrameError::Corrupt) => {
-            log::warn!("dropped a corrupt frame");
-            CRC_FAILURES.fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-        Err(FrameError::Oversized) => {
-            log::warn!("dropped a frame over {MAX_PAYLOAD} bytes");
-            OVERSIZED_FRAMES.fetch_add(1, Ordering::Relaxed);
-            return;
-        }
-    };
-    let request = Queued { transport, payload: Payload::new(payload) };
+    let request = Queued { transport, frame: frame.map(Payload::new) };
     if let Err(TrySendError::Full(request)) = REQUESTS.try_send(request)
-        && let Some(busy) = busy(request.payload.as_bytes())
+        && let Ok(payload) = request.frame
+        && let Some(busy) = busy(payload.as_bytes())
     {
         // With replies backed up too, the client times out and retries.
         let _ = replies.try_send(busy);
     }
 }
 
-/// A request waiting for the `rig` task.
+/// A frame waiting for the `rig` task.
+#[cfg(feature = "firmware")]
 pub struct Queued {
     pub transport: Transport,
-    pub payload: Payload,
+    pub frame: Result<Payload, FrameError>,
+}
+
+/// The Rig sets a request's log level on the transport it came from.
+#[cfg(feature = "firmware")]
+impl Connection for Transport {
+    fn set_log_level(&self, level: LogLevel) {
+        match *self {
+            Transport::Usb => crate::usb::set_log_level(level),
+            #[cfg(feature = "wifi")]
+            Transport::Tcp(connection) => crate::tcp::set_log_level(connection, level),
+        }
+    }
 }
 
 /// One frame's payload, owned so it can wait in a queue.

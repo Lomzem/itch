@@ -61,12 +61,11 @@ pub struct BoardInfo {
     pub last_panic: &'static str,
 }
 
-/// Counters kept outside the Rig, by the transports. Each counts since boot
-/// and wraps. See "Counters" in `docs/protocol/errors.md`.
+/// Counters kept outside the Rig, by the logger and the transport writers.
+/// Each counts since boot and wraps. See "Counters" in
+/// `docs/protocol/errors.md`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Counters {
-    pub crc_failures: u32,
-    pub oversized_frames: u32,
     pub dropped_logs: u32,
     pub usb_tx_dropped: u32,
 }

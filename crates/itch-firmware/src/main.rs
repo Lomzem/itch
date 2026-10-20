@@ -12,7 +12,6 @@ use esp_rtos::embassy::Executor;
 use itch_core::board::Board;
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, Rig, SETTLE_MS};
-use itch_core::wire::LogLevel;
 use itch_firmware::board::{self, RealBoard};
 use itch_firmware::queue::{self, Payload, Transport};
 use itch_firmware::{logger, supervisor, usb};
@@ -74,28 +73,16 @@ async fn rig(mut rig: Rig, mut board: RealBoard) {
             }
             Either::Second(request) => request,
         };
-        let len = match rig.handle(request.payload.as_bytes(), &mut board, &mut reply) {
-            Handled::NoReply => continue,
-            Handled::Reply { len, settle } => {
-                if settle {
-                    Timer::after_millis(SETTLE_MS).await;
-                }
-                len
-            }
-            Handled::SetLogLevel { len, level } => {
-                set_log_level(request.transport, level);
-                len
-            }
+        let frame = request.frame.as_ref().map(Payload::as_bytes).map_err(|&error| error);
+        let Handled::Reply { len, settle } =
+            rig.receive(frame, &mut board, &request.transport, &mut reply)
+        else {
+            continue;
         };
+        if settle {
+            Timer::after_millis(SETTLE_MS).await;
+        }
         send_reply(request.transport, Payload::new(&reply[..len])).await;
-    }
-}
-
-fn set_log_level(transport: Transport, level: LogLevel) {
-    match transport {
-        Transport::Usb => usb::set_log_level(level),
-        #[cfg(feature = "wifi")]
-        Transport::Tcp(connection) => itch_firmware::tcp::set_log_level(connection, level),
     }
 }
 

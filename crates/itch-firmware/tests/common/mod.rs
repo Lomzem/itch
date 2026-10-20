@@ -13,8 +13,8 @@ use embedded_storage::nor_flash::{
 };
 use itch_core::board::{Board, Counters};
 use itch_core::frame::MAX_PAYLOAD;
-use itch_core::rig::{Handled, Rig};
-use itch_core::wire::{Message, Reply, Request, Response, SetLabel, WriteChannels};
+use itch_core::rig::{Connection, Handled, Rig};
+use itch_core::wire::{LogLevel, Message, Reply, Request, Response, SetLabel, WriteChannels};
 use itch_firmware::board::{Chip, RevA};
 use itch_firmware::settings::PARTITION;
 use itch_firmware::supervisor::{DEADLINE_MS, LAST_CHECK_IN, Latch, ResetLine, Supervisor};
@@ -336,6 +336,14 @@ pub type FakeRevA = RevA<Bus, ResetLine<'static, ResetPin>, Led, NoDelay, FlashP
 
 const TOKEN: u64 = 0x0123_4567_89AB_CDEF;
 
+/// The connection the bench's requests come in on. Nothing here reads its
+/// Log Events.
+struct Usb;
+
+impl Connection for Usb {
+    fn set_log_level(&self, _: LogLevel) {}
+}
+
 /// A Rev A Rig on the bench: the Rig logic over the real board support, with
 /// a simulated expander and pins.
 pub struct Bench {
@@ -403,7 +411,7 @@ impl Bench {
         let mut payload = [0; MAX_PAYLOAD];
         let len = Message::Request { request_id: 1, request }.encode(&mut payload);
         let mut reply = [0; MAX_PAYLOAD];
-        let handled = self.rig.handle(&payload[..len], &mut self.board, &mut reply);
+        let handled = self.rig.receive(Ok(&payload[..len]), &mut self.board, &Usb, &mut reply);
         assert!(matches!(handled, Handled::Reply { .. }), "no reply: {handled:?}");
     }
 
@@ -430,7 +438,7 @@ impl Bench {
         let mut payload = [0; MAX_PAYLOAD];
         let len = Message::Request { request_id: 1, request }.encode(&mut payload);
         let mut reply = [0; MAX_PAYLOAD];
-        let len = match self.rig.handle(&payload[..len], &mut self.board, &mut reply) {
+        let len = match self.rig.receive(Ok(&payload[..len]), &mut self.board, &Usb, &mut reply) {
             Handled::Reply { len, .. } => len,
             handled => panic!("no reply: {handled:?}"),
         };
