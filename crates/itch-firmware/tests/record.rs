@@ -124,12 +124,28 @@ fn a_malformed_version_2_record_is_ignored() {
         v2(b"bench-3", ssid, b"1234567", &DHCP),
         v2(b"bench-3", ssid, b"", &DHCP),
         v2(b"bench-3", b"", passphrase, &DHCP),
-        // An address configuration no SetAddress could have given.
-        v2(b"bench-3", ssid, passphrase, &[2, 192, 0, 2, 10, 24, 192, 0, 2, 1]),
-        v2(b"bench-3", ssid, passphrase, &[0, 192, 0, 2, 10, 0, 0, 0, 0, 0]),
-        v2(b"bench-3", ssid, passphrase, &[1, 0, 0, 0, 0, 24, 0, 0, 0, 0]),
-        v2(b"bench-3", ssid, passphrase, &[1, 192, 0, 2, 10, 33, 0, 0, 0, 0]),
     ] {
         assert_eq!(decode(&record), None, "{record:02X?}");
+    }
+}
+
+/// The network stack panics on some addresses older firmware accepted, so
+/// an address configuration no `SetAddress` could give falls back to DHCP
+/// rather than taking the label and credentials with it.
+#[test]
+fn an_address_configuration_no_set_address_could_give_loads_as_dhcp() {
+    let wifi = Some(("ExampleRigNet", "example-passphrase"));
+    let (ssid, passphrase) = (b"ExampleRigNet", b"example-passphrase");
+    for address in [
+        [2, 192, 0, 2, 10, 24, 192, 0, 2, 1],
+        [0, 192, 0, 2, 10, 0, 0, 0, 0, 0],
+        [1, 0, 0, 0, 0, 24, 0, 0, 0, 0],
+        [1, 192, 0, 2, 10, 33, 0, 0, 0, 0],
+        [1, 224, 0, 0, 1, 24, 0, 0, 0, 0],
+        [1, 255, 255, 255, 255, 24, 0, 0, 0, 0],
+        [1, 192, 0, 2, 10, 24, 239, 255, 255, 250],
+    ] {
+        let record = v2(b"bench-3", ssid, passphrase, &address);
+        assert_eq!(decode(&record), Some(snapshot("bench-3", wifi)), "{address:?}");
     }
 }
