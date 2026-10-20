@@ -38,7 +38,7 @@ espflash save-image --chip esp32s3 --flash-size 8mb \
 espflash write-bin 0x0 itch-firmware.bin    # flashes it; the label survives
 ```
 
-Rig firmware serves the protocol over two Transports at once: USB, and TCP port 7878 over Wi-Fi once the Rig has been given its network's credentials ([ADR 0008](docs/adr/0008-wifi-on-the-rig-network.md)). Every build includes Wi-Fi; credentials are set at runtime, never compiled in. The same protocol runs over TCP in `itch-sim` for development and integration tests.
+Rig firmware serves the protocol over two Transports at once: USB, and TCP port 7878 over Wi-Fi once the Rig has been given its network's credentials ([ADR 0008](docs/adr/0008-wifi-on-the-rig-network.md)). On the network, scripts find a Rig by its Label through mDNS, or connect to `tcp://<address>:7878`. Every build includes Wi-Fi; credentials are set at runtime, never compiled in. The same protocol runs over TCP in `itch-sim` for development and integration tests.
 
 ## Releases
 

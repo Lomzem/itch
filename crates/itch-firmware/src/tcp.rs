@@ -16,8 +16,7 @@ use itch_core::frame::{FrameDecoder, MAX_FRAME};
 use crate::connections::{CONNECTIONS, Connection, TCP_CONNECTIONS};
 use crate::radio;
 
-/// The port clients connect to: `tcp://<address>:7878`.
-pub const PORT: u16 = 7878;
+pub use crate::wifi::PORT;
 
 /// How long one frame may take to go out. After that the rest of it is
 /// dropped, so a client that stops reading never stalls the Rig.

@@ -19,6 +19,7 @@ Use a client adapted to [protocol 3](../protocol/README.md); older released clie
 - A continuity meter, and a scope or a logic analyser with enough inputs for GPIO6 and all 16 contacts. Use a pull-up on each contact.
 - A jumper wire to short SDA (GPIO5) or the expander RESET (GPIO6) to GND.
 - A second Rig, for the discovery checks.
+- For mDNS, `avahi-utils` on the Linux PC (`avahi-browse`, `avahi-resolve`), and Bonjour's `dns-sd` on the Windows PC.
 - For the Wi-Fi items: a WPA2-Personal access point you can reboot and switch off, running DHCP on a network the Linux PC can reach, and a second network to move a Rig to (a second SSID on the same access point will do). The examples call them `ExampleRigNet` and `ExampleRigNet2` and use addresses from `192.0.2.0/24`; use your own.
 
 ## Where the tunable figures live
@@ -37,6 +38,8 @@ Use a client adapted to [protocol 3](../protocol/README.md); older released clie
 | TCP connections at once, 4 | `TCP_CONNECTIONS` | `crates/itch-firmware/src/connections.rs` |
 | TCP keepalive 5 s, timeout 15 s | `KEEP_ALIVE`, `TIMEOUT` | `crates/itch-firmware/src/tcp.rs` |
 | TCP write timeout, 100 ms | `WRITE_TIMEOUT` | `crates/itch-firmware/src/tcp.rs` |
+| mDNS record TTL, 120 s | `TTL` | `crates/itch-firmware/src/mdns.rs` |
+| mDNS restart after a failure, 5 s | `RETRY` | `crates/itch-firmware/src/responder.rs` |
 | DTR/RTS on open: both up, or both down on Windows | `lines` in `UsbTransport.__init__` | itch-py `src/itch/_usb.py` |
 
 `SETTLE_MS` also paces `itch-sim`, so changing it keeps the simulator honest. If you raise `DEADLINE_MS` or `WATCHDOG_TIMEOUT`, keep the RWDT above the supervisor deadline. Both must stay above the longest single flash erase or write: `rig` checks in around each one, and a check-in in time feeds the RWDT, but nothing runs during one. Raising either one also lengthens the 2 s fault-to-open bound, so update the spec to match.
@@ -163,7 +166,7 @@ Each case needs a throwaway build from a scratch branch; don't commit it. Make t
 
 ## Wi-Fi
 
-Items 16–24 need the access point from [Tools](#tools). Keep a USB connection open throughout, with its log level at debug, to read the Rig's Wi-Fi log lines (`joined …`, `couldn't join …`, `lost …`, `serving tcp://…`, `heap: …`). `GetStatus` gives `link` (off, joining or connected) and `current_address`, and the configured `mode`, `address`, `prefix` and `gateway`.
+Items 16–27 need the access point from [Tools](#tools). Keep a USB connection open throughout, with its log level at debug, to read the Rig's Wi-Fi log lines (`joined …`, `couldn't join …`, `lost …`, `serving tcp://…`, `advertising …`, `heap: …`). `GetStatus` gives `link` (off, joining or connected) and `current_address`, and the configured `mode`, `address`, `prefix` and `gateway`.
 
 ## 16. Joining the network **[per-Rig]**
 
@@ -240,3 +243,21 @@ Setup: the test pattern from item 6 (CH1 and CH16 on), with the meter or logic a
 - **Method:** over TCP, send `SetAddress` with a static address on no network the access point serves, such as `198.51.100.10/24` with gateway `198.51.100.1`. Try to reach the Rig over TCP at that address and at its old one for 1 minute. Then over USB, read `GetStatus` and send `SetAddress` with mode DHCP.
 - **Pass:** the Rig is unreachable over Wi-Fi, but `link` stays connected and `current_address` is `198.51.100.10`: it doesn't fall back to DHCP or check for a conflict. USB answers normally throughout, and the contacts keep the test pattern. After the USB `SetAddress` the Rig takes a DHCP address and is reachable over TCP again, with no reboot: `uptime` keeps rising and `reset_reason` is unchanged.
 - **If it fails:** USB is served apart from the network stack (`crates/itch-firmware/src/usb.rs`), so a USB stall here is a scheduling matter, as in item 19.
+
+## 25. Discovery **[per-Rig]**
+
+- **Method:** label the Rig `bench-3` and connect it to `ExampleRigNet` by DHCP. On the Linux PC run `avahi-browse -rt _itch._tcp` and `avahi-resolve -n itch-c02718.local`; on the Windows PC run `dns-sd -B _itch._tcp` and `dns-sd -L bench-3 _itch._tcp`. Connect a client to the address and port found and send `Hello`. Then give the Rig a static address with `SetAddress` and repeat.
+- **Pass:** both PCs find one `bench-3` instance on port 7878 with host `itch-c02718.local` and TXT `hwid=60:55:F9:C0:27:18`, matching the Rig's Hardware ID. The hostname resolves to the Rig's `current_address`, the DHCP lease, then the static address. `Hello` over TCP reports the same Hardware ID and label as over USB.
+- **If it fails:** each time the responder starts, the USB log says `advertising bench-3 as itch-c02718.local at …`; `mDNS didn't start` and `mDNS stopped` warnings give its error. The responder is `crates/itch-firmware/src/responder.rs` and its records are `Answers` in `crates/itch-firmware/src/mdns.rs`. If the Rig says it is advertising but no PC sees it, capture `udp port 5353` in Wireshark: an access point that isolates wireless clients or filters multicast drops the Rig's packets. Use `tcp://<current_address>:7878` meanwhile.
+
+## 26. Renaming re-advertises
+
+- **Method:** keep `avahi-browse -r _itch._tcp` running, so it follows changes. Over USB, rename the Rig `bench-4`, then a 64-byte label, then `bench-3`. Lock the Rig under another Holder and try renaming it again.
+- **Pass:** within a few seconds of each rename, the browser removes the old instance and adds the new one, with the same host, address and TXT. The 64-byte label appears cut to its first 63 bytes. The refused rename changes nothing.
+- **If it fails:** the board hands the label to mDNS at boot and after each saved rename (`RevA::advertise` in `crates/itch-firmware/src/board.rs`), and the responder starts again when `Wifi::changed_from` in `crates/itch-firmware/src/wifi.rs` wakes it, sending a goodbye for the old instance first. An old instance that stays listed until its 120 s TTL runs out means the goodbye was lost.
+
+## 27. Re-advertising after a rejoin
+
+- **Method:** keep `avahi-browse -r _itch._tcp` running. Reboot the access point. Then move the Rig to `ExampleRigNet2` and back, as in item 18, and finally power-cycle it.
+- **Pass:** each time the Rig is connected again, the browser lists it within a few seconds of `link` showing connected, at its new `current_address`, with nothing queried by hand. While it is away, its instance drops out within about 2 minutes. After the power cycle it is advertised under its saved label.
+- **If it fails:** the responder only runs while `Wifi::network` reports connected, and the address it advertises comes from the `address` and `readdress` tasks in `crates/itch-firmware/src/radio.rs`.

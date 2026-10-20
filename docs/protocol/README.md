@@ -2,7 +2,7 @@
 
 This folder is the source of truth for the protocol between a Rig (or `itch-sim`) and its clients. A client can be written from these files alone.
 
-- `README.md` (this file): transports, framing, the message header, field types, ordering, Channel state, Locks and versioning.
+- `README.md` (this file): transports, discovery, framing, the message header, field types, ordering, Channel state, Locks and versioning.
 - [`messages.md`](messages.md): a byte table and hex example per message.
 - [`errors.md`](errors.md): error codes, log levels and counters.
 - [`vectors-v3.json`](vectors-v3.json): the conformance vectors that every codec must reproduce. Every ` ```hex ` block in these docs is checked against it.
@@ -17,11 +17,31 @@ The Rig speaks one framed byte stream, the same over every transport. Its two Tr
 - **Wi-Fi:** TCP port **7878** on the Rig's network. One TCP connection is one stream. A Rig serves up to **4** TCP connections at once beside USB and refuses any more straight away. A connection whose client stops answering is dropped about 15 s after it last heard from it (keepalive every 5 s), which frees its place. The link is neither encrypted nor authenticated; the Rig network is the access boundary.
 - **`itch-sim`** serves the same stream over TCP, for development and integration tests without hardware. Its connections share one simulated Rig, with the same limit of 4.
 
-A Rig without Wi-Fi credentials keeps its radio off and works over USB alone. To put it on a network, send [`SetWifi`](messages.md#setwifi) over either Transport: the Rig joins as a WPA2-Personal station, takes an address by DHCP, and joins again every few seconds after any failure or drop, keeping its Channels as they are throughout. `GetStatus` reports the `link` and the Rig's `current_address`; connect to `tcp://<current_address>:7878`, e.g. `tcp://192.0.2.10:7878`. A Rig that won't join can always be inspected and fixed over USB.
+A Rig without Wi-Fi credentials keeps its radio off and works over USB alone. To put it on a network, send [`SetWifi`](messages.md#setwifi) over either Transport: the Rig joins as a WPA2-Personal station, takes an address by DHCP, and joins again every few seconds after any failure or drop, keeping its Channels as they are throughout. `GetStatus` reports the `link` and the Rig's `current_address`. Find the Rig by its Label through [discovery](#discovery), or connect to `tcp://<current_address>:7878`, e.g. `tcp://192.0.2.10:7878`. A Rig that won't join can always be inspected and fixed over USB.
 
 To give the Rig a static address instead, such as `192.0.2.10/24` with gateway `192.0.2.1`, send [`SetAddress`](messages.md#setaddress); send it again with DHCP to switch back. Neither needs the passphrase. The Rig uses exactly the address given, with no conflict check and no fallback to DHCP, so a wrong static address takes it off the network: fix it over USB with another `SetAddress`. `GetStatus` reports the configured `mode`, `address`, `prefix` and `gateway` beside `current_address`, which stays zero until the Rig is connected.
 
 The Rig can't see connection boundaries over USB, so `Hello` is optional on the wire. Clients should still send it first on every connection. It identifies the Rig without changing Channels, log filtering or other Rig state.
+
+## Discovery
+
+While its `link` is connected, a Rig advertises itself on its network with mDNS and DNS-SD (RFC 6762 and RFC 6763), so a script can pick it by Label over Wi-Fi just as over USB:
+
+| Record | Value | Example |
+| --- | --- | --- |
+| Service type | `_itch._tcp` | `_itch._tcp.local` |
+| Instance name | The Label, as `Hello` reports it | `bench-3._itch._tcp.local` |
+| Port (SRV) | 7878 | |
+| Hostname (SRV target, A) | `itch-` plus the last three Hardware ID bytes in lowercase hex. Never the Label, which need not be a valid hostname | `itch-c02718.local` |
+| Address (A) | The Rig's `current_address`, from DHCP or static. IPv4 only | `192.0.2.10` |
+| TXT | `hwid=` and the Hardware ID as six uppercase hex pairs joined by colons, as in its USB serial number | `hwid=60:55:F9:C0:27:18` |
+
+- **Long Labels.** A DNS label holds at most 63 bytes and a Label up to 64, so a longer Label is advertised cut to its first 63 bytes, at the last whole UTF-8 character. Match a 64-byte Label by its first 63 bytes, and confirm with `Hello` once connected.
+- **Changes.** A rename re-announces the Rig under its new Label and withdraws the old instance (a goodbye, TTL 0). A new address re-announces it. Records have a 120 s TTL, so a Rig that left the network drops out of browsers' caches within about 2 minutes.
+- **Clashes.** The Rig doesn't probe for name conflicts. Two Rigs with the same Label are both advertised under that instance name; tell them apart by `hwid`, and keep Labels unique.
+- **Browsing**, for example: `avahi-browse -rt _itch._tcp` on Linux, `dns-sd -B _itch._tcp` on macOS and Windows.
+
+**Fallback.** Where mDNS doesn't reach, such as across subnets or on a network that drops multicast, connect to `tcp://<address>:7878`, e.g. `tcp://192.0.2.10:7878`. The address is `current_address` from `GetStatus` over USB, or the Rig's static address. Where the operating system resolves `.local` names, `tcp://itch-c02718.local:7878` works too.
 
 ## Framing
 
