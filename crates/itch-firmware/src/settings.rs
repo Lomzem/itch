@@ -98,7 +98,8 @@ pub fn encode(snapshot: &Snapshot) -> Record {
 }
 
 /// The settings `record` saves, or `None` unless it is a whole record of
-/// version 1 or 2. A version 1 record has no credentials and DHCP.
+/// version 1 or 2. A version 1 record has no credentials and DHCP, as does
+/// an address configuration `SetAddress` couldn't have given.
 pub fn decode(record: &[u8]) -> Option<Snapshot> {
     let (&version, mut rest) = record.split_first_chunk::<VERSION_LEN>()?;
     let label = Label::new(take_text(&mut rest, MAX_LABEL)?)?;
@@ -113,7 +114,10 @@ pub fn decode(record: &[u8]) -> Option<Snapshot> {
             };
             let (address, tail) = rest.split_first_chunk::<ADDRESS_LEN>()?;
             rest = tail;
-            (wifi, take_addressing(address)?)
+            // A configuration the Rig can't use, such as an address the
+            // network stack would panic on that an older firmware saved,
+            // loads as DHCP, so stored settings never stop the Rig booting.
+            (wifi, take_addressing(address).unwrap_or_default())
         }
         _ => return None,
     };

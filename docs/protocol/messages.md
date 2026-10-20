@@ -191,13 +191,15 @@ Result body:
 | `usb_tx_dropped` | `u32` | |
 | `holder` | `text` | Who holds the Lock. Empty = unlocked |
 | `wifi_configured` | `bool` | The Rig has Wi-Fi credentials |
-| `ssid` | `text` | The network the credentials are for. At most 32 bytes. Empty = no credentials |
-| `link` | `u8` | The Wi-Fi link: 0 off (no credentials, or the radio is off), 1 joining, 2 connected. Anything higher is `Malformed` |
-| `current_address` | `[u8; 4]` | The Rig's IPv4 address on the network, in network order (`c0 00 02 0a` is `192.0.2.10`). Zero when not connected |
+| `ssid` | `text` | The network the credentials are for. At most 32 bytes. Empty exactly when `wifi_configured` is 0 |
+| `link` | `u8` | The Wi-Fi link: 0 off (no credentials, or the radio is off), 1 joining, 2 connected. Always 0 when `wifi_configured` is 0. Anything higher is `Malformed` |
+| `current_address` | `[u8; 4]` | The Rig's IPv4 address on the network, in network order (`c0 00 02 0a` is `192.0.2.10`). Non-zero when connected, zero otherwise |
 | `mode` | `u8` | How the Rig is set to take its address, whether or not it is connected: 0 DHCP, 1 static. Anything higher is `Malformed` |
 | `address` | `[u8; 4]` | The static address. Zero for DHCP |
 | `prefix` | `u8` | The static prefix length. Zero for DHCP |
 | `gateway` | `[u8; 4]` | The static gateway. Zero for DHCP or no gateway |
+
+A reply whose fields break these rules, such as DHCP with a non-zero `address` or a joining `link` with a non-zero `current_address`, is `Malformed`. `mode`, `address`, `prefix` and `gateway` follow the rules of [`SetAddress`](#setaddress).
 
 The counters are described in [`errors.md`](errors.md#counters). Each counts since boot and wraps at 2^32.
 
@@ -431,11 +433,11 @@ Request body:
 | --- | --- | --- |
 | `holder` | `text` | At most 64 bytes. Empty = no Holder. See [Locks](README.md#locks) |
 | `mode` | `u8` | 0 DHCP, 1 static. Anything higher is `Malformed` |
-| `address` | `[u8; 4]` | Static: any non-zero address. DHCP: zero |
+| `address` | `[u8; 4]` | Static: a unicast address, so not zero, not `255.255.255.255` and not multicast (`224.0.0.0` to `239.255.255.255`). DHCP: zero |
 | `prefix` | `u8` | Static: 1 to 32. DHCP: zero |
-| `gateway` | `[u8; 4]` | Static: zero = no gateway. DHCP: zero |
+| `gateway` | `[u8; 4]` | Static: zero = no gateway, otherwise a unicast address as for `address`. DHCP: zero |
 
-Anything else, such as DHCP with a non-zero field, is `Malformed`. `GetStatus` reports the configuration as `mode`, `address`, `prefix` and `gateway`, beside the `current_address` the Rig has.
+Anything else, such as DHCP with a non-zero field or a multicast static address, is `Malformed`. `GetStatus` reports the configuration as `mode`, `address`, `prefix` and `gateway`, beside the `current_address` the Rig has.
 
 Result body: empty.
 

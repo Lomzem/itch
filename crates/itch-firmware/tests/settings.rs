@@ -192,6 +192,18 @@ fn a_version_1_record_loads_with_dhcp() {
     assert_eq!(bench.addressing(), DHCP);
 }
 
+/// A saved address the network stack would panic on, such as the multicast
+/// 224.0.0.1/24 an older firmware accepted, must not stop the Rig booting.
+#[test]
+fn a_saved_address_the_rig_cannot_use_loads_as_dhcp_and_keeps_the_rest() {
+    let record = b"\x02\x00\x07bench-3\x0dExampleRigNet\x12example-passphrase\
+        \x01\xe0\x00\x00\x01\x18\xc0\x00\x02\x01";
+    let mut bench = Bench::boot_with(Flash::holding(record));
+    assert_eq!(bench.addressing(), DHCP);
+    assert_eq!(bench.label(), "bench-3");
+    assert_eq!(bench.credentials(), credentials(SSID, PASSPHRASE));
+}
+
 #[test]
 fn an_address_the_flash_fails_to_save_is_refused_and_the_old_one_kept() {
     let mut bench = Bench::boot();

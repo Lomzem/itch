@@ -136,14 +136,17 @@ impl Board for SimBoard {
 
     /// With credentials the sim is "connected" at its static address, or
     /// with DHCP at the address it is bound to; it joins no real network.
+    /// Bound to no one IPv4 address, with DHCP it is joining, like a Rig
+    /// still waiting for its lease.
     fn network(&self) -> Network {
         let address = match self.addressing {
             Addressing::Dhcp => self.address,
             Addressing::Static(set) => set.address(),
         };
-        match self.wifi {
-            Some(_) => Network { link: Link::Connected, address },
-            None => Network::default(),
+        match (self.wifi, address) {
+            (None, _) => Network::default(),
+            (Some(_), [0, 0, 0, 0]) => Network { link: Link::Joining, address },
+            (Some(_), address) => Network { link: Link::Connected, address },
         }
     }
 }

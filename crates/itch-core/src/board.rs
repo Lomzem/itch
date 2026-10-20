@@ -69,7 +69,7 @@ pub struct StorageFault;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Network {
     pub link: Link,
-    /// Zero when not connected.
+    /// Non-zero when connected, zero otherwise.
     pub address: [u8; 4],
 }
 

@@ -2,7 +2,9 @@ mod common;
 
 use common::{FakeBoard, TestRig};
 use itch_core::board::Network;
-use itch_core::wire::{AddressMode, ErrorCode, Link, Reply, Request, SetAddress, StatusReply};
+use itch_core::wire::{
+    AddressMode, ErrorCode, Link, Reply, Request, SetAddress, SetWifi, StatusReply,
+};
 
 /// Made-up addresses from the documentation range.
 const ADDRESS: [u8; 4] = [192, 0, 2, 10];
@@ -79,6 +81,11 @@ fn an_address_configuration_out_of_range_is_malformed_and_changes_nothing() {
         (AddressMode::Static, [0; 4], 24, GATEWAY),
         (AddressMode::Static, ADDRESS, 0, GATEWAY),
         (AddressMode::Static, ADDRESS, 33, GATEWAY),
+        (AddressMode::Static, [224, 0, 0, 1], 24, GATEWAY),
+        (AddressMode::Static, [239, 255, 255, 250], 24, GATEWAY),
+        (AddressMode::Static, [255, 255, 255, 255], 24, GATEWAY),
+        (AddressMode::Static, ADDRESS, 24, [224, 0, 0, 1]),
+        (AddressMode::Static, ADDRESS, 24, [255, 255, 255, 255]),
     ] {
         let set = SetAddress { holder: "", mode, address, prefix, gateway };
         assert_eq!(rig.refused(Request::SetAddress(set)), ErrorCode::Malformed, "{set:?}");
@@ -110,6 +117,11 @@ fn the_rig_reports_the_configuration_stored_at_boot() {
 #[test]
 fn status_reports_the_configured_address_beside_the_one_the_rig_has() {
     let mut rig = TestRig::new();
+    rig.ok(Request::SetWifi(SetWifi {
+        holder: "",
+        ssid: "ExampleRigNet",
+        passphrase: "example-passphrase",
+    }));
     rig.ok(set_static(ADDRESS, 24, GATEWAY));
     assert_eq!(status(&mut rig).current_address, [0; 4]);
 

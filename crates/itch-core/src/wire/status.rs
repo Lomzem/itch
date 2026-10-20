@@ -1,5 +1,6 @@
 use super::codec::{Reader, Writer};
 use super::{AddressMode, DecodeError, Link, MAX_HOLDER, MAX_LAST_PANIC, MAX_SSID};
+use crate::wifi::Addressing;
 
 /// The `GetStatus` result. Counters count since boot and wrap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +24,8 @@ pub struct StatusReply<'a> {
     /// never reported.
     pub ssid: &'a str,
     pub link: Link,
-    /// The Rig's IPv4 address on the network. Zero when not connected.
+    /// The Rig's IPv4 address on the network: non-zero when connected,
+    /// zero otherwise.
     pub current_address: [u8; 4],
     /// How the Rig is configured to take its address, whether or not it
     /// has one. The static `address`, `prefix` and `gateway` are zero for
@@ -57,7 +59,7 @@ impl<'a> StatusReply<'a> {
     }
 
     pub(crate) fn decode(r: &mut Reader<'a>) -> Result<Self, DecodeError> {
-        Ok(Self {
+        let status = Self {
             uptime_ms: r.u64()?,
             reset_reason: r.u8()?,
             last_panic: r.text(MAX_LAST_PANIC)?,
@@ -76,6 +78,19 @@ impl<'a> StatusReply<'a> {
             address: r.array()?,
             prefix: r.u8()?,
             gateway: r.array()?,
-        })
+        };
+        status.is_consistent().then_some(status).ok_or(DecodeError::Malformed)
+    }
+
+    /// Whether the fields agree, as the byte table says they must: the SSID
+    /// is there exactly when the Rig has credentials, the link is off
+    /// without them, `current_address` is non-zero exactly when connected,
+    /// and the address configuration is one `SetAddress` could have given.
+    fn is_consistent(&self) -> bool {
+        let connected = self.link == Link::Connected;
+        self.wifi_configured != self.ssid.is_empty()
+            && (self.wifi_configured || self.link == Link::Off)
+            && connected == (self.current_address != [0; 4])
+            && Addressing::new(self.mode, self.address, self.prefix, self.gateway).is_some()
     }
 }

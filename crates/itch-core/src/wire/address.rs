@@ -9,11 +9,11 @@ pub struct SetAddress<'a> {
     /// Empty = no Holder.
     pub holder: &'a str,
     pub mode: AddressMode,
-    /// Non-zero when static.
+    /// Unicast when static.
     pub address: [u8; 4],
     /// 1 to 32 when static.
     pub prefix: u8,
-    /// Zero = no gateway.
+    /// Zero = no gateway. Otherwise unicast.
     pub gateway: [u8; 4],
 }
 

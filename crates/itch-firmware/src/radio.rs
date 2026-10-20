@@ -32,6 +32,11 @@ const RETRY: Duration = Duration::from_secs(5);
 /// to the change reaches its client first.
 const LEAVE_DELAY: Duration = Duration::from_secs(1);
 
+/// How often the Rig looks for a new address while it has one. The network
+/// stack wakes nobody as a DHCP renewal or a new static address replaces
+/// one address with another, only as an address comes or goes.
+const ADDRESS_POLL: Duration = Duration::from_secs(1);
+
 /// The network stack's socket slots: DHCP, the TCP connections, and the
 /// mDNS responder's.
 const SOCKETS: usize = 1 + TCP_CONNECTIONS + 1;
@@ -65,7 +70,6 @@ pub fn start(
         embassy_net::new(Interface::station(), config, RESOURCES.init(StackResources::new()), seed);
     spawner.spawn(net(runner).unwrap());
     spawner.spawn(address(stack).unwrap());
-    spawner.spawn(readdress(stack).unwrap());
     spawner.spawn(join(wifi, credentials).unwrap());
     for slot in USB + 1..=TCP_CONNECTIONS {
         spawner.spawn(tcp::tcp(stack, slot).unwrap());
@@ -91,39 +95,35 @@ async fn net(mut runner: Runner<'static, Interface>) {
     runner.run().await
 }
 
-/// Tells `WIFI` the stack's IPv4 address as it comes and goes.
+/// Tells `WIFI` the stack's IPv4 address whenever it changes, so
+/// `GetStatus` and mDNS follow it: as a DHCP lease comes, goes or renews
+/// at a new address, or a new configuration applies. Has the stack take
+/// its address as the board says, once the reply to the change has had
+/// time to go out. A static address applies whether or not the Rig is
+/// joined, so it is the Rig's address from its next join.
 #[embassy_executor::task]
 async fn address(stack: Stack<'static>) {
+    let mut reported = None;
     loop {
-        let config = stack.config_v4();
-        let address = config.as_ref().map(|config| config.address.address());
-        WIFI.set_address(address.map(|address| address.octets()));
-        match address {
-            Some(address) => {
-                log::info!("serving tcp://{address}:{PORT}");
-                stack.wait_config_down().await;
-            }
-            None => stack.wait_config_up().await,
-        }
-    }
-}
-
-/// Has the network stack take its address as the board says, once the
-/// reply to the change has had time to go out. A static address applies
-/// whether or not the Rig is joined, so it is the Rig's address from its
-/// next join.
-#[embassy_executor::task]
-async fn readdress(stack: Stack<'static>) {
-    loop {
-        let addressing = WIFI.addressing().await;
-        Timer::after(LEAVE_DELAY).await;
-        stack.set_config_v4(config_v4(addressing));
-        // `address` hears of an address coming or going, but not of one
-        // address replacing another.
         let address = stack.config_v4().map(|config| config.address.address());
-        WIFI.set_address(address.map(|address| address.octets()));
-        if let Some(address) = address {
-            log::info!("serving tcp://{address}:{PORT}");
+        if address != reported {
+            WIFI.set_address(address.map(|address| address.octets()));
+            if let Some(address) = address {
+                log::info!("serving tcp://{address}:{PORT}");
+            }
+            reported = address;
+        }
+        let changed = async {
+            match address {
+                Some(_) => {
+                    select(stack.wait_config_down(), Timer::after(ADDRESS_POLL)).await;
+                }
+                None => stack.wait_config_up().await,
+            }
+        };
+        if let Either::Second(addressing) = select(changed, WIFI.addressing()).await {
+            Timer::after(LEAVE_DELAY).await;
+            stack.set_config_v4(config_v4(addressing));
         }
     }
 }
