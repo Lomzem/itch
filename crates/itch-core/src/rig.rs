@@ -3,8 +3,8 @@ use crate::frame::MAX_PAYLOAD;
 use crate::label::Label;
 use crate::lease::{self, Lease};
 use crate::wire::{
-    CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, LogLevel, Message, PROTOCOL, Reply, Request,
-    RequestType, Response, StatusReply,
+    CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, LogLevel, PROTOCOL, Reply, Request,
+    StatusReply, decode_request,
 };
 
 /// How long the transport waits after a Channel write before replying, so
@@ -65,16 +65,9 @@ impl Rig {
         board: &mut B,
         reply: &mut [u8; MAX_PAYLOAD],
     ) -> Handled {
-        let Some((&request_type, rest)) = request.split_first() else {
+        let Some((header, decoded)) = decode_request(request) else {
             return self.drop_malformed();
         };
-        let Some((request_id, body)) = rest.split_first_chunk() else {
-            return self.drop_malformed();
-        };
-        let request_id = u32::from_le_bytes(*request_id);
-        let decoded = RequestType::from_u8(request_type)
-            .ok_or(DecodeError::UnknownType)
-            .and_then(|kind| Request::decode(kind, body));
         let log_level = match decoded {
             Ok(Request::SetLogLevel { level }) => Some(level),
             _ => None,
@@ -87,17 +80,19 @@ impl Rig {
                     DecodeError::UnknownType => ErrorCode::UnknownRequest,
                 };
                 log::warn!(
-                    "answered request {request_id} (type {request_type:#04x}) with {error:?}"
+                    "answered request {} (type {:#04x}) with {error:?}",
+                    header.request_id,
+                    header.request_type
                 );
                 Err(error)
             }
         };
         let settle = matches!(result, Ok(Reply::WriteChannels { .. } | Reply::Clear { .. }));
         let response = match result {
-            Ok(reply) => Response::Ok(reply),
-            Err(error) => Response::Err { request_type, error, detail: self.detail(error) },
+            Ok(reply) => header.reply(reply),
+            Err(error) => header.error(error, self.detail(error)),
         };
-        let len = Message::Response { request_id, response }.encode(reply);
+        let len = response.encode(reply);
         match log_level {
             Some(level) => Handled::SetLogLevel { len, level },
             None => Handled::Reply { len, settle },

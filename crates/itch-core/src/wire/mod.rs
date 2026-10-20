@@ -173,6 +173,42 @@ pub enum Reply<'a> {
     ReleaseLease,
 }
 
+/// What a response must echo from its request: read first, so even a
+/// request whose body can't be decoded gets an answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequestHeader {
+    /// The raw `type` byte, which may name no known request.
+    pub request_type: u8,
+    pub request_id: u32,
+}
+
+impl RequestHeader {
+    /// The ok response carrying `reply`.
+    pub fn reply(self, reply: Reply<'_>) -> Message<'_> {
+        Message::Response { request_id: self.request_id, response: Response::Ok(reply) }
+    }
+
+    /// The response refusing the request with `error` and its `detail`.
+    pub fn error(self, error: ErrorCode, detail: &str) -> Message<'_> {
+        let response = Response::Err { request_type: self.request_type, error, detail };
+        Message::Response { request_id: self.request_id, response }
+    }
+}
+
+/// Reads a request payload: its header, and the request or why it couldn't
+/// be decoded. Any `type` byte that names no request, a response's or an
+/// Event's included, is `UnknownType`. `None` when the payload is too short
+/// to hold a `request_id`, so it can't be answered.
+pub fn decode_request(payload: &[u8]) -> Option<(RequestHeader, Result<Request<'_>, DecodeError>)> {
+    let (&request_type, rest) = payload.split_first()?;
+    let (request_id, body) = rest.split_first_chunk()?;
+    let header = RequestHeader { request_type, request_id: u32::from_le_bytes(*request_id) };
+    let request = RequestType::from_u8(request_type)
+        .ok_or(DecodeError::UnknownType)
+        .and_then(|request_type| Request::decode(request_type, body));
+    Some((header, request))
+}
+
 /// An unsolicited message from the Rig. Clients ignore Event types they don't know.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event<'a> {
@@ -219,11 +255,8 @@ impl<'a> Message<'a> {
                 }
                 return Ok(Message::Event(Event::Log(LogEvent::decode(&mut r)?)));
             }
-            let request_id = r.u32()?;
-            let request_type =
-                RequestType::from_u8(message_type).ok_or(DecodeError::UnknownType)?;
-            let request = Request::decode(request_type, r.rest())?;
-            return Ok(Message::Request { request_id, request });
+            let (header, request) = decode_request(payload).ok_or(DecodeError::Malformed)?;
+            return Ok(Message::Request { request_id: header.request_id, request: request? });
         }
         let request_id = r.u32()?;
         let request_type = message_type & !RESPONSE_BIT;

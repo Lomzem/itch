@@ -20,7 +20,7 @@ use itch_core::frame::MAX_PAYLOAD;
 use itch_core::frame::{FrameError, MAX_FRAME, encode_frame};
 #[cfg(feature = "firmware")]
 use itch_core::logs::LogQueue;
-use itch_core::wire::{ErrorCode, Message, Response};
+use itch_core::wire::{ErrorCode, decode_request};
 
 /// How many requests may wait for the `rig` task. A transport answers
 /// `Busy` itself when the queue is full.
@@ -135,10 +135,8 @@ impl Payload {
 /// The `Busy` reply to `request`, or `None` if it has no readable
 /// `request_id`.
 pub fn busy(request: &[u8]) -> Option<Payload> {
-    let (&request_type, rest) = request.split_first()?;
-    let request_id = u32::from_le_bytes(*rest.first_chunk()?);
-    let response = Response::Err { request_type, error: ErrorCode::Busy, detail: "" };
+    let (header, _) = decode_request(request)?;
     let mut reply = Payload { len: 0, bytes: [0; MAX_PAYLOAD] };
-    reply.len = Message::Response { request_id, response }.encode(&mut reply.bytes);
+    reply.len = header.error(ErrorCode::Busy, "").encode(&mut reply.bytes);
     Some(reply)
 }
