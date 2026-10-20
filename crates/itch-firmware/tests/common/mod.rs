@@ -5,6 +5,8 @@ use std::convert::Infallible;
 use std::rc::Rc;
 use std::task::Poll;
 
+use embassy_embedded_hal::adapter::BlockingAsync;
+use embassy_futures::block_on;
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{ErrorType as PinErrorType, OutputPin};
 use embedded_hal::i2c::{self, ErrorKind, I2c, NoAcknowledgeSource, Operation};
@@ -14,11 +16,15 @@ use embedded_storage::nor_flash::{
 use itch_core::board::{Board, Counters};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, LogControl, Rig};
-use itch_core::wire::{LogLevel, Message, Reply, Request, Response, SetLabel, WriteChannels};
+use itch_core::wire::{
+    LogLevel, Message, Reply, Request, Response, SetLabel, SetWifi, WriteChannels,
+};
 use itch_firmware::board::{Chip, RevA};
 use itch_firmware::serve::Clock;
 use itch_firmware::settings::PARTITION;
 use itch_firmware::supervisor::{Check, Failsafe, Latch, ResetLine, Supervisor};
+use sequential_storage::cache::Cache;
+use sequential_storage::map::{MapConfig, MapStorage};
 
 const ADDRESS: u8 = 0x20;
 pub const IODIRA: u8 = 0x00;
@@ -293,6 +299,22 @@ impl Flash {
         }))
     }
 
+    /// A partition holding `record` as its settings, the way every firmware
+    /// saves them, such as a version 1 record an older firmware left.
+    pub fn holding(record: &[u8]) -> Rc<RefCell<Self>> {
+        #[repr(align(4))]
+        struct Scratch([u8; 256]);
+        let flash = Self::erased();
+        let mut map = MapStorage::new(
+            BlockingAsync::new(FlashPort(Rc::clone(&flash))),
+            MapConfig::new(PARTITION),
+            Cache::new_uncached(),
+        );
+        block_on(map.store_item(&mut Scratch([0; 256]).0, &(), &record)).expect("stored");
+        flash.borrow_mut().writes.clear();
+        flash
+    }
+
     /// Overwrites the whole partition with noise.
     pub fn scramble(&mut self) {
         let mut seed = 0x2545_F491_u32;
@@ -469,6 +491,33 @@ impl Bench {
             Reply::SetLabel { label } => label.to_owned(),
             reply => panic!("not a SetLabel reply: {reply:?}"),
         })
+    }
+
+    /// Gives the Rig Wi-Fi credentials through the Rig logic, or clears
+    /// them with an empty `ssid` and `passphrase`: `Ok`, or the error code's
+    /// name.
+    pub fn set_wifi(&mut self, ssid: &str, passphrase: &str) -> Result<(), String> {
+        let request = Request::SetWifi(SetWifi { holder: "", ssid, passphrase });
+        self.request(request, |reply| match reply {
+            Reply::SetWifi => (),
+            reply => panic!("not a SetWifi reply: {reply:?}"),
+        })
+    }
+
+    /// The network `GetStatus` reports credentials for. `None` = none.
+    pub fn wifi(&mut self) -> Option<String> {
+        self.request(Request::GetStatus, |reply| match reply {
+            Reply::GetStatus(status) => status.wifi_configured.then(|| status.ssid.to_owned()),
+            reply => panic!("not a GetStatus reply: {reply:?}"),
+        })
+        .expect("GetStatus succeeds")
+    }
+
+    /// The SSID and passphrase the board would join with. `GetStatus` never
+    /// reports the passphrase.
+    pub fn credentials(&mut self) -> Option<(String, String)> {
+        let wifi = self.board.load_wifi()?;
+        Some((wifi.ssid().to_owned(), wifi.passphrase().to_owned()))
     }
 
     /// The label `Hello` reports.

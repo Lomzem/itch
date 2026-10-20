@@ -1,5 +1,5 @@
 use super::codec::{Reader, Writer};
-use super::{DecodeError, MAX_HOLDER, MAX_LAST_PANIC};
+use super::{DecodeError, Link, MAX_HOLDER, MAX_LAST_PANIC, MAX_SSID};
 
 /// The `GetStatus` result. Counters count since boot and wrap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +17,14 @@ pub struct StatusReply<'a> {
     pub usb_tx_dropped: u32,
     /// Who holds the Lock. Empty = unlocked.
     pub holder: &'a str,
+    /// The Rig has Wi-Fi credentials.
+    pub wifi_configured: bool,
+    /// The network the credentials are for. Empty = none. The passphrase is
+    /// never reported.
+    pub ssid: &'a str,
+    pub link: Link,
+    /// The Rig's IPv4 address on the network. Zero when not connected.
+    pub current_address: [u8; 4],
 }
 
 impl<'a> StatusReply<'a> {
@@ -31,6 +39,10 @@ impl<'a> StatusReply<'a> {
         w.u32(self.expander_faults);
         w.u32(self.usb_tx_dropped);
         w.text(self.holder);
+        w.bool(self.wifi_configured);
+        w.text(self.ssid);
+        w.u8(self.link as u8);
+        w.bytes(&self.current_address);
     }
 
     pub(crate) fn decode(r: &mut Reader<'a>) -> Result<Self, DecodeError> {
@@ -45,6 +57,10 @@ impl<'a> StatusReply<'a> {
             expander_faults: r.u32()?,
             usb_tx_dropped: r.u32()?,
             holder: r.text(MAX_HOLDER)?,
+            wifi_configured: r.bool()?,
+            ssid: r.text(MAX_SSID)?,
+            link: Link::decode(r)?,
+            current_address: r.array()?,
         })
     }
 }

@@ -13,6 +13,7 @@ Each message lists its request body and its ok result body. The header (`type`, 
 | `0x07` | [`SetLogLevel`](#setloglevel) |
 | `0x0B` | [`Lock`](#lock) |
 | `0x0C` | [`ReleaseLock`](#releaselock) |
+| `0x0D` | [`SetWifi`](#setwifi) |
 
 | Type | Event |
 | --- | --- |
@@ -170,7 +171,7 @@ Reply:
 
 ## GetStatus
 
-`0x05`. Reports the Rig's health since boot and who holds its Lock.
+`0x05`. Reports the Rig's health since boot, who holds its Lock and its Wi-Fi network. It never reports the Wi-Fi passphrase.
 
 Request body: empty.
 
@@ -188,6 +189,10 @@ Result body:
 | `expander_faults` | `u32` | |
 | `usb_tx_dropped` | `u32` | |
 | `holder` | `text` | Who holds the Lock. Empty = unlocked |
+| `wifi_configured` | `bool` | The Rig has Wi-Fi credentials |
+| `ssid` | `text` | The network the credentials are for. At most 32 bytes. Empty = no credentials |
+| `link` | `u8` | The Wi-Fi link: 0 off (no credentials, or the radio is off), 1 joining, 2 connected. Anything higher is `Malformed` |
+| `current_address` | `[u8; 4]` | The Rig's IPv4 address on the network, in network order (`c0 00 02 0a` is `192.0.2.10`). Zero when not connected |
 
 The counters are described in [`errors.md`](errors.md#counters). Each counts since boot and wraps at 2^32.
 
@@ -197,7 +202,7 @@ Request:
 05 78 56 34 12
 ```
 
-Reply from a Rig up for 1 h 2 min 3 s after a software reset, whose previous boot panicked at `src/main.rs:88:5`, with counters 1 to 6 in order, Locked by `alice@ws3`:
+Reply from a Rig up for 1 h 2 min 3 s after a software reset, whose previous boot panicked at `src/main.rs:88:5`, with counters 1 to 6 in order, Locked by `alice@ws3`, connected to the network `ExampleRigNet` at `192.0.2.10`:
 
 ```hex
 85 78 56 34 12 00
@@ -211,6 +216,10 @@ f8 ce 38 00 00 00 00 00
 05 00 00 00
 06 00 00 00
 09 61 6c 69 63 65 40 77 73 33
+01
+0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74
+02
+c0 00 02 0a
 ```
 
 ## SetLabel
@@ -356,6 +365,51 @@ Reply:
 
 ```hex
 8c 78 56 34 12 00
+```
+
+## SetWifi
+
+`0x0D`. Gives the Rig the Wi-Fi network to join, as an SSID and its WPA2-Personal passphrase, or clears them with an empty SSID and passphrase. The Rig saves the credentials before it replies, so the reply means they survive a reboot; it keeps its label and every other setting. A failed save gets `StorageFault` and keeps the old credentials. The Rig then applies them: it leaves its current network and joins the new one, so a change made over Wi-Fi drops that connection after the reply. A Rig with no credentials keeps its radio off and works over USB alone. `GetStatus` reports the SSID, but never the passphrase. On a Rig Locked by someone else it is refused with `Locked` (see [Locks](README.md#locks)).
+
+Request body:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `holder` | `text` | At most 64 bytes. Empty = no Holder. See [Locks](README.md#locks) |
+| `ssid` | `text` | 1 to 32 bytes. Empty = clear the credentials |
+| `passphrase` | `text` | 8 to 63 bytes, or empty with an empty `ssid`. Anything else is `Malformed` |
+
+Result body: empty.
+
+Request from Holder `alice@ws3` to join `ExampleRigNet` with passphrase `example-passphrase`:
+
+```hex
+0d 78 56 34 12
+09 61 6c 69 63 65 40 77 73 33
+0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74
+12 65 78 61 6d 70 6c 65 2d 70 61 73 73 70 68 72 61 73 65
+```
+
+Request with no Holder to clear the credentials:
+
+```hex
+0d 78 56 34 12
+00
+00
+00
+```
+
+Reply:
+
+```hex
+8d 78 56 34 12 00
+```
+
+Refused with `StorageFault`:
+
+```hex
+8d 78 56 34 12 09
+00
 ```
 
 ## Log

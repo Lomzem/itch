@@ -151,9 +151,13 @@
         "dropped_logs": 4,
         "expander_faults": 5,
         "usb_tx_dropped": 6,
-        "holder": "alice@ws3"
+        "holder": "alice@ws3",
+        "wifi_configured": true,
+        "ssid": "ExampleRigNet",
+        "link": 2,
+        "current_address": "192.0.2.10"
       },
-      "payload": "85 78 56 34 12 00 f8 ce 38 00 00 00 00 00 03 10 73 72 63 2f 6d 61 69 6e 2e 72 73 3a 38 38 3a 35 01 00 00 00 02 00 00 00 03 00 00 00 04 00 00 00 05 00 00 00 06 00 00 00 09 61 6c 69 63 65 40 77 73 33"
+      "payload": "85 78 56 34 12 00 f8 ce 38 00 00 00 00 00 03 10 73 72 63 2f 6d 61 69 6e 2e 72 73 3a 38 38 3a 35 01 00 00 00 02 00 00 00 03 00 00 00 04 00 00 00 05 00 00 00 06 00 00 00 09 61 6c 69 63 65 40 77 73 33 01 0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74 02 c0 00 02 0a"
     },
     {
       "name": "get-status-ok-fresh-boot",
@@ -171,9 +175,13 @@
         "dropped_logs": 0,
         "expander_faults": 0,
         "usb_tx_dropped": 0,
-        "holder": ""
+        "holder": "",
+        "wifi_configured": false,
+        "ssid": "",
+        "link": 0,
+        "current_address": "0.0.0.0"
       },
-      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
     },
     {
       "name": "set-label-request",
@@ -314,13 +322,58 @@
       "payload": "8c 78 56 34 12 00"
     },
     {
+      "name": "set-wifi-request",
+      "message": {
+        "kind": "request",
+        "type": "SetWifi",
+        "request_id": 305419896,
+        "holder": "alice@ws3",
+        "ssid": "ExampleRigNet",
+        "passphrase": "example-passphrase"
+      },
+      "payload": "0d 78 56 34 12 09 61 6c 69 63 65 40 77 73 33 0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74 12 65 78 61 6d 70 6c 65 2d 70 61 73 73 70 68 72 61 73 65"
+    },
+    {
+      "name": "set-wifi-clear-request",
+      "message": {
+        "kind": "request",
+        "type": "SetWifi",
+        "request_id": 305419896,
+        "holder": "",
+        "ssid": "",
+        "passphrase": ""
+      },
+      "payload": "0d 78 56 34 12 00 00 00"
+    },
+    {
+      "name": "set-wifi-ok",
+      "message": {
+        "kind": "response",
+        "type": "SetWifi",
+        "request_id": 305419896,
+        "status": "Ok"
+      },
+      "payload": "8d 78 56 34 12 00"
+    },
+    {
+      "name": "set-wifi-storage-fault",
+      "message": {
+        "kind": "response",
+        "type": "SetWifi",
+        "request_id": 305419896,
+        "status": "StorageFault",
+        "detail": ""
+      },
+      "payload": "8d 78 56 34 12 09 00"
+    },
+    {
       "name": "log-event",
       "message": {
         "kind": "event",
         "type": "Log",
         "level": 2,
         "dropped": 3,
-        "text": "label set to café"
+        "text": "label set to caf\u00e9"
       },
       "payload": "40 02 03 00 00 00 6c 61 62 65 6c 20 73 65 74 20 74 6f 20 63 61 66 c3 a9"
     }
@@ -577,6 +630,71 @@
     {
       "name": "lock-ok-trailing-byte",
       "payload": "8b 78 56 34 12 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-wifi-ssid-over-32-bytes",
+      "payload": "0d 78 56 34 12 00 21 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 12 65 78 61 6d 70 6c 65 2d 70 61 73 73 70 68 72 61 73 65",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-wifi-passphrase-under-8-bytes",
+      "payload": "0d 78 56 34 12 00 0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74 07 31 32 33 34 35 36 37",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-wifi-passphrase-over-63-bytes",
+      "payload": "0d 78 56 34 12 00 0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74 40 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-wifi-clear-with-passphrase",
+      "payload": "0d 78 56 34 12 00 00 12 65 78 61 6d 70 6c 65 2d 70 61 73 73 70 68 72 61 73 65",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-wifi-without-passphrase",
+      "payload": "0d 78 56 34 12 00 0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-wifi-ssid-invalid-utf8",
+      "payload": "0d 78 56 34 12 00 02 c3 28 12 65 78 61 6d 70 6c 65 2d 70 61 73 73 70 68 72 61 73 65",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-wifi-holder-over-64-bytes",
+      "payload": "0d 78 56 34 12 41 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74 12 65 78 61 6d 70 6c 65 2d 70 61 73 73 70 68 72 61 73 65",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-wifi-ok-trailing-byte",
+      "payload": "8d 78 56 34 12 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-without-wifi",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-wifi-configured-bad-bool",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-ssid-over-32-bytes",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 21 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 02 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-link-above-connected",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-short-current-address",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
       "error": "Malformed"
     },
     {

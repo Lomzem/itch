@@ -1,10 +1,12 @@
 mod common;
 
+use std::net::Ipv4Addr;
+
 use common::{cases, hex, vectors};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::wire::{
-    DecodeError, ErrorCode, Event, HelloReply, Lock, LogEvent, LogLevel, Message, PROTOCOL, Reply,
-    Request, RequestType, Response, SetLabel, StatusReply, WriteChannels,
+    DecodeError, ErrorCode, Event, HelloReply, Link, Lock, LogEvent, LogLevel, Message, PROTOCOL,
+    Reply, Request, RequestType, Response, SetLabel, SetWifi, StatusReply, WriteChannels,
 };
 use serde_json::Value;
 
@@ -80,6 +82,7 @@ fn request_type(name: &str) -> RequestType {
         "SetLogLevel" => RequestType::SetLogLevel,
         "Lock" => RequestType::Lock,
         "ReleaseLock" => RequestType::ReleaseLock,
+        "SetWifi" => RequestType::SetWifi,
         _ => panic!("unknown request type {name}"),
     }
 }
@@ -107,6 +110,11 @@ fn request(request_type: RequestType, json: &Value) -> Request<'_> {
         RequestType::ReleaseLock => {
             Request::ReleaseLock { holder: json["holder"].as_str().unwrap() }
         }
+        RequestType::SetWifi => Request::SetWifi(SetWifi {
+            holder: json["holder"].as_str().unwrap(),
+            ssid: json["ssid"].as_str().unwrap(),
+            passphrase: json["passphrase"].as_str().unwrap(),
+        }),
     }
 }
 
@@ -135,11 +143,16 @@ fn reply(request_type: RequestType, json: &Value) -> Reply<'_> {
             expander_faults: int(&json["expander_faults"]),
             usb_tx_dropped: int(&json["usb_tx_dropped"]),
             holder: json["holder"].as_str().unwrap(),
+            wifi_configured: json["wifi_configured"].as_bool().unwrap(),
+            ssid: json["ssid"].as_str().unwrap(),
+            link: Link::from_u8(int(&json["link"])).unwrap(),
+            current_address: address(&json["current_address"]),
         }),
         RequestType::SetLabel => Reply::SetLabel { label: json["label"].as_str().unwrap() },
         RequestType::SetLogLevel => Reply::SetLogLevel,
         RequestType::Lock => Reply::Lock,
         RequestType::ReleaseLock => Reply::ReleaseLock,
+        RequestType::SetWifi => Reply::SetWifi,
     }
 }
 
@@ -164,6 +177,11 @@ fn error_code(name: &str) -> ErrorCode {
         .into_iter()
         .find(|code| format!("{code:?}") == name)
         .unwrap_or_else(|| panic!("unknown error code {name}"))
+}
+
+/// An IPv4 address as a vector writes it, such as `"192.0.2.10"`.
+fn address(json: &Value) -> [u8; 4] {
+    json.as_str().unwrap().parse::<Ipv4Addr>().unwrap().octets()
 }
 
 fn int<T: TryFrom<u64>>(json: &Value) -> T {

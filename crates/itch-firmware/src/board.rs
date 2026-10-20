@@ -5,10 +5,11 @@ use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::OutputPin;
 use embedded_hal::i2c::I2c;
 use embedded_storage::nor_flash::NorFlash;
-use itch_core::board::{Board, BoardInfo, Counters, HwFault, StorageFault};
+use itch_core::board::{Board, BoardInfo, Counters, HwFault, Network, StorageFault};
 use itch_core::label::Label;
+use itch_core::wifi::Credentials;
 
-use crate::settings::Settings;
+use crate::settings::{Settings, Snapshot};
 
 /// The MCP23017's I2C address: A0-A2 are tied to GND.
 const EXPANDER: u8 = 0x20;
@@ -214,11 +215,25 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
     }
 
     fn load_label(&mut self) -> Option<Label> {
-        self.settings.load()
+        Some(self.settings.saved().label)
     }
 
     fn save_label(&mut self, label: &str) -> Result<(), StorageFault> {
-        self.settings.save(&Label::new(label).ok_or(StorageFault)?)
+        let label = Label::new(label).ok_or(StorageFault)?;
+        self.settings.save(Snapshot { label, ..*self.settings.saved() })
+    }
+
+    fn load_wifi(&mut self) -> Option<Credentials> {
+        self.settings.saved().wifi
+    }
+
+    fn save_wifi(&mut self, wifi: Option<&Credentials>) -> Result<(), StorageFault> {
+        self.settings.save(Snapshot { wifi: wifi.copied(), ..*self.settings.saved() })
+    }
+
+    /// The radio isn't brought up yet, so the link is always off.
+    fn network(&self) -> Network {
+        Network::default()
     }
 }
 

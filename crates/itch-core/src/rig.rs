@@ -2,6 +2,7 @@ use crate::board::{Board, StorageFault};
 use crate::frame::{FrameError, MAX_PAYLOAD};
 use crate::holder::Holder;
 use crate::label::Label;
+use crate::wifi::Credentials;
 use crate::wire::{
     CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, Lock, LogLevel, PROTOCOL, Reply, Request,
     StatusReply, decode_request,
@@ -34,6 +35,8 @@ pub trait LogControl {
 pub struct Rig {
     /// The label `Hello` reports.
     label: Label,
+    /// The Wi-Fi credentials saved. `None` = none.
+    wifi: Option<Credentials>,
     /// Who holds the Lock. `None` = unlocked. Never persisted, so a reset
     /// unlocks the Rig.
     holder: Option<Holder>,
@@ -59,8 +62,10 @@ impl Rig {
             .load_label()
             .filter(|label| !label.as_str().is_empty())
             .unwrap_or_else(|| Label::default_for(board.info().hardware_id));
+        let wifi = board.load_wifi();
         Self {
             label,
+            wifi,
             holder: None,
             channels: 0,
             crc_failures: 0,
@@ -158,6 +163,7 @@ impl Rig {
             Request::GetStatus => {
                 let info = board.info();
                 let counters = board.counters();
+                let network = board.network();
                 Reply::GetStatus(StatusReply {
                     uptime_ms: board.now(),
                     reset_reason: info.reset_reason,
@@ -169,6 +175,10 @@ impl Rig {
                     expander_faults: self.expander_faults,
                     usb_tx_dropped: counters.usb_tx_dropped,
                     holder: self.holder(),
+                    wifi_configured: self.wifi.is_some(),
+                    ssid: self.wifi.as_ref().map_or("", Credentials::ssid),
+                    link: network.link,
+                    current_address: network.address,
                 })
             }
             Request::WriteChannels(write) => {
@@ -184,6 +194,11 @@ impl Rig {
                 self.check_lock(set.holder)?;
                 self.set_label(board, set.label)?;
                 Reply::SetLabel { label: self.label.as_str() }
+            }
+            Request::SetWifi(set) => {
+                self.check_lock(set.holder)?;
+                self.set_wifi(board, set.credentials())?;
+                Reply::SetWifi
             }
             Request::Lock(lock) => {
                 self.lock(lock)?;
@@ -244,6 +259,22 @@ impl Rig {
             "" => default,
             custom => Label::new(custom).expect("decoding caps labels at 64 bytes"),
         };
+        Ok(())
+    }
+
+    /// Saves `wifi` and reports it from now on. `None` clears the
+    /// credentials.
+    fn set_wifi<B: Board>(
+        &mut self,
+        board: &mut B,
+        wifi: Option<Credentials>,
+    ) -> Result<(), ErrorCode> {
+        board.save_wifi(wifi.as_ref()).map_err(|StorageFault| ErrorCode::StorageFault)?;
+        match &wifi {
+            Some(wifi) => log::info!("Wi-Fi credentials set for {}", wifi.ssid()),
+            None => log::info!("Wi-Fi credentials cleared"),
+        }
+        self.wifi = wifi;
         Ok(())
     }
 

@@ -2,6 +2,8 @@
 //! `SimBoard` (itch-sim) and `FakeBoard` (tests).
 
 use crate::label::Label;
+use crate::wifi::Credentials;
+use crate::wire::Link;
 
 pub trait Board {
     fn info(&self) -> BoardInfo;
@@ -34,15 +36,34 @@ pub trait Board {
     /// Persists `label` before returning, so it survives a reboot. Empty
     /// means "report the default"; the default itself is never saved.
     fn save_label(&mut self, label: &str) -> Result<(), StorageFault>;
+
+    /// The Wi-Fi credentials last saved, read once at boot. `None` when
+    /// there are none, or for a missing or corrupt record.
+    fn load_wifi(&mut self) -> Option<Credentials>;
+
+    /// Persists `wifi` before returning, so it survives a reboot, keeping
+    /// every other setting. `None` clears the credentials.
+    fn save_wifi(&mut self, wifi: Option<&Credentials>) -> Result<(), StorageFault>;
+
+    /// The Wi-Fi link now, and the address the Rig has on it.
+    fn network(&self) -> Network;
 }
 
 /// The Channel expander didn't answer or didn't take its configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HwFault;
 
-/// The label couldn't be saved. Answered with `StorageFault`.
+/// A setting couldn't be saved. Answered with `StorageFault`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StorageFault;
+
+/// The Rig's Wi-Fi link and its IPv4 address on the network.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Network {
+    pub link: Link,
+    /// Zero when not connected.
+    pub address: [u8; 4],
+}
 
 /// Facts fixed for the life of a boot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
