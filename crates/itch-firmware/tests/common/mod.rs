@@ -3,6 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
 use std::rc::Rc;
+use std::task::Poll;
 
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{ErrorType as PinErrorType, OutputPin};
@@ -15,6 +16,7 @@ use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, LogControl, Rig};
 use itch_core::wire::{LogLevel, Message, Reply, Request, Response, SetLabel, WriteChannels};
 use itch_firmware::board::{Chip, RevA};
+use itch_firmware::serve::Clock;
 use itch_firmware::settings::PARTITION;
 use itch_firmware::supervisor::{Check, Failsafe, Latch, ResetLine, Supervisor};
 
@@ -213,6 +215,16 @@ pub fn now() -> u64 {
 
 pub fn advance(ms: u64) {
     CLOCK.with(|clock| clock.set(clock.get() + ms));
+}
+
+/// Waits on the bench clock. A wait ends once the test has advanced the
+/// clock far enough and polls again.
+pub struct BenchClock;
+
+impl Clock for BenchClock {
+    async fn until(&self, at: u64) {
+        std::future::poll_fn(|_| if now() >= at { Poll::Ready(()) } else { Poll::Pending }).await
+    }
 }
 
 thread_local! {

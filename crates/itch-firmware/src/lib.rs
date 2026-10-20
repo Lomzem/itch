@@ -6,10 +6,11 @@
 #![no_std]
 
 pub mod board;
+pub mod connections;
 pub mod crash;
 #[cfg(feature = "firmware")]
 pub mod logger;
-pub mod mailbox;
+pub mod serve;
 pub mod settings;
 pub mod supervisor;
 #[cfg(feature = "firmware")]
