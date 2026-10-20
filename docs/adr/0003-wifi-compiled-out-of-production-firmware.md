@@ -1,3 +1,7 @@
+---
+status: superseded by ADR-0006
+---
+
 # WiFi is compiled out of production firmware
 
 Rigs serve QA over USB only. The firmware's WiFi + TCP transport sits behind a Cargo feature, `wifi`, which is **off by default**: production/QA builds contain no radio code, no credentials and no TCP listener; development builds opt in with `--features wifi`. The handshake reports the firmware's enabled features so clients can flag a development build on a QA Rig.

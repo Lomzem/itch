@@ -2,21 +2,21 @@
 
 This folder is the source of truth for the protocol between a Rig (or `itch-sim`) and its clients. A client can be written from these files alone.
 
-- `README.md` (this file): transports, framing, the message header, field types, ordering, the Lease and versioning.
+- `README.md` (this file): transports, framing, the message header, field types, ordering, Channel state and versioning.
 - [`messages.md`](messages.md): a byte table and hex example per message.
 - [`errors.md`](errors.md): error codes, log levels and counters.
-- [`vectors-v1.json`](vectors-v1.json): the conformance vectors that every codec must reproduce. Every ` ```hex ` block in these docs is checked against it.
+- [`vectors-v2.json`](vectors-v2.json): the conformance vectors that every codec must reproduce. Every ` ```hex ` block in these docs is checked against it.
 
-This is **protocol 1**.
+This is **protocol 2**.
 
 ## Transports
 
 The Rig speaks one framed byte stream, the same over every transport:
 
 - **USB:** the ESP32-S3's native USB Serial/JTAG port (VID `0x303A`, PID `0x1001`). The USB serial number is the Rig's Hardware ID. This is how QA reach a Rig.
-- **TCP:** `itch-sim`, and firmware built with the `wifi` feature (development only, see ADR 0003), which listens on port 7878 and serves one connection at a time. One TCP connection is one stream.
+- **TCP:** `itch-sim`, for development and integration tests without hardware. One TCP connection is one stream; concurrent connections share one simulated Rig. Rig firmware supports USB only (ADR 0006).
 
-The Rig can't see connection boundaries over USB, so `Hello` is optional on the wire. Clients should still send it first on every connection.
+The Rig can't see connection boundaries over USB, so `Hello` is optional on the wire. Clients should still send it first on every connection. It identifies the Rig without changing Channels, log filtering or other Rig state.
 
 ## Framing
 
@@ -94,10 +94,9 @@ A `Hello` refused with `Busy` and detail `queue full`:
 | `text` | `u8` byte length, then that many bytes of UTF-8 |
 | `[u8; N]` | `N` raw bytes |
 
-- Holder and Label text are at most 64 bytes.
+- Label text is at most 64 bytes.
 - Enums are `u8`, counters `u32`, uptime a `u64` in milliseconds.
 - The Hardware ID is 6 raw bytes, the factory MAC in transmission order (`60 55 f9 c0 27 18` is `60:55:F9:C0:27:18`).
-- A Lease token is a `u64`. Token 0 is reserved to mean "no token".
 
 ### Strict decoding
 
@@ -106,7 +105,7 @@ Every message has an exact layout. The Rig answers `Malformed` (with the `reques
 A `WriteChannels` whose body stops a byte short gets `Malformed`, with its `request_id` echoed:
 
 ```hex
-03 78 56 34 12 ef cd ab 89 67 45 23 01 01 80 01
+03 78 56 34 12 01 80 01
 ```
 
 ## Ordering
@@ -115,33 +114,30 @@ The Rig processes requests in order and replies in order. The one exception is `
 
 Every change sets an absolute state, so retrying a request is safe. The Rig keeps no `request_id` history, and a client retries with a fresh `request_id`.
 
-## Lease
+## Channel state
 
-A Rig has one Lease, which lets one client change its Channels. It belongs to a token, not to a connection or a transport. The Rig sets its lifetime and reports it in `AcquireLease` (`ttl_ms`, 10 s), and the client keeps it alive with `RenewLease`. The Lease expires when `now >= last_renewal + 10000` ms; the Rig checks this when a request arrives. A free Rig is one with no Lease or an expired one.
+Any client may read or change a Rig without acquiring permission, presenting a token or sending a heartbeat. A Mask write is applied as one operation; separate requests from different clients may interleave. A whole script is not exclusive (ADR 0007).
 
-- **Token-bearing requests** are `WriteChannels`, `Clear`, `SetLabel` and `RenewLease`. Token 0 means "no token", and such a request (or an `AcquireLease` with token 0) gets `LeaseRequired`. Otherwise:
-  - with the token that holds the Lease, the request proceeds and renews it;
-  - on a free Rig, the request claims the Lease and proceeds. The Holder is the request's `holder` if it carries one, otherwise "unknown" until the next `RenewLease`;
-  - while another client holds a live Lease, the reply is `LeaseLost`, with a `detail` naming the Holder. The Lease is not renewed.
-- `AcquireLease` is granted when the Rig is free or the token already holds the Lease, so a retried acquire succeeds. While another client holds a live Lease the reply is `LeaseHeld`, with a `detail` naming the Holder, unless `takeover` is set: then the request replaces the Holder at once.
-- `ReleaseLease` frees the Rig. A token that doesn't hold the Lease makes it a no-op success.
-- Reads (`Hello`, `GetChannels`, `GetStatus`) carry no token and neither need nor renew the Lease.
-- Expiry, release and Takeover leave the Channels as they are. Only a reboot Clears them. So after a reboot, or after another client held the Lease and released it, the old token's next change reclaims the Rig without error.
+A powered Rig retains its commanded Channel state when a script exits, crashes, sleeps or disconnects. Connecting, querying and closing a transport do not Clear it. Use `Clear` to turn every Channel off; power-up and Rig reset also Clear. Hardware supervision can temporarily hold Channels off during an expander fault and restores the commanded state after recovery, as described in [Expander faults](errors.md#expander-faults).
+
+## Log delivery
+
+`Log` Events are unsolicited and need no client requests or heartbeat. `SetLogLevel` selects which ones the stream receives and discards its queued backlog. USB has one stream for the life of the Rig: its level persists until changed or rebooted, so a new client should explicitly set its level, including off. A simulator TCP connection starts with logs off. `Hello` does not reset this setting.
 
 ## Versioning
 
-`Hello` reports one `protocol` number, bumped on any change to any message. Clients require an exact match and refuse anything else. There are no per-frame or per-message versions.
+`Hello` reports one `protocol` number, bumped on any change to any message. Clients require an exact match and refuse anything else. There are no per-frame or per-message versions and no version negotiation. The common response header and the first `u16` of a successful `Hello` result are stable: read the protocol number before decoding the rest of its version-specific body, so a mismatch can be reported without first treating the body as malformed.
 
-The vectors file is named for the protocol it describes (`vectors-v1.json` for protocol 1).
+The vectors file is named for the protocol it describes (`vectors-v2.json` for protocol 2).
 
 ## Conformance vectors
 
-[`vectors-v1.json`](vectors-v1.json) is the one authority for the byte layout. Every codec must encode each message to exactly its payload and decode each payload to exactly its message.
+[`vectors-v2.json`](vectors-v2.json) is the one authority for the byte layout. Every codec must encode each message to exactly its payload and decode each payload to exactly its message.
 
 Conventions:
 
 - Hex strings (`payload`, `frame`, `stream`, `hardware_id`) are lowercase byte pairs separated by spaces. Readers should ignore whitespace and case.
-- `u64` values (Lease tokens) are hex strings with a `0x` prefix, since JSON numbers lose precision above 2^53. Other integers are JSON numbers.
+- Integer fields are JSON numbers. Consumers must preserve the full range of `u64` uptime values.
 
 Top level:
 

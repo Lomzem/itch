@@ -52,8 +52,6 @@ pub struct BoardInfo {
     pub firmware_version: &'static str,
     /// Built from uncommitted code.
     pub dirty: bool,
-    /// `wire::FEATURE_*` bits.
-    pub features: u8,
     pub board_revision: &'static str,
     /// The raw `SocResetReason` of this boot, or 0 if unknown.
     pub reset_reason: u8,

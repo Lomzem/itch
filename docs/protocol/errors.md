@@ -7,11 +7,7 @@ A response's `status` is 0 on success, otherwise one of these codes. `detail` is
 | Code | Name | Meaning |
 | --- | --- | --- |
 | 1 | `UnknownRequest` | The request `type` is unknown |
-| 2 | `UnsupportedVersion` | The request needs a protocol version the Rig doesn't speak |
 | 3 | `Malformed` | The request body breaks its byte table (see Strict decoding in the README) |
-| 4 | `LeaseRequired` | A change request carried token 0 |
-| 5 | `LeaseHeld` | `AcquireLease` without `takeover` while another client holds a live Lease. `detail` names the Holder |
-| 6 | `LeaseLost` | A token-bearing request while another client holds a live Lease. `detail` names the Holder |
 | 7 | `Busy` | The Rig's request queue is full. Sent at once, so it may overtake queued replies |
 | 8 | `HardwareFault` | The Channel expander is unreachable or held in reset |
 | 9 | `StorageFault` | The Rig couldn't persist a setting |

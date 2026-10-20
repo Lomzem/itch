@@ -13,7 +13,7 @@ use itch_core::board::Board;
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, Rig, SETTLE_MS};
 use itch_firmware::board::{self, RealBoard};
-use itch_firmware::mailbox::{Payload, REQUESTS};
+use itch_firmware::mailbox::Payload;
 use itch_firmware::{logger, supervisor, usb};
 use static_cell::StaticCell;
 
@@ -22,7 +22,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 /// How often the `rig` task does its idle work.
 const TICK: Duration = Duration::from_millis(50);
 
-/// How long a reply may wait for room in its transport's mailbox.
+/// How long a reply may wait for room in the USB mailbox.
 const REPLY_TIMEOUT: Duration = Duration::from_millis(100);
 
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
@@ -32,14 +32,7 @@ static PANICKED: AtomicBool = AtomicBool::new(false);
 
 #[esp_hal::main]
 fn main() -> ! {
-    let board::Parts {
-        mut board,
-        watchdog,
-        usb_rx,
-        usb_tx,
-        #[cfg(feature = "wifi")]
-        wifi,
-    } = board::boot();
+    let board::Parts { mut board, watchdog, usb_rx, usb_tx } = board::boot();
     logger::init();
     let last_panic = board.info().last_panic;
     if !last_panic.is_empty() {
@@ -54,20 +47,18 @@ fn main() -> ! {
         spawner.spawn(rig(rig_logic, board).unwrap());
         spawner.spawn(usb::usb_rx(usb_rx).unwrap());
         spawner.spawn(usb::usb_tx(usb_tx).unwrap());
-        #[cfg(feature = "wifi")]
-        itch_firmware::tcp::start(spawner, wifi);
     })
 }
 
 /// The sole owner of the Rig, the board and I2C. Answers queued requests
-/// in order, each to the transport it came from, and runs the idle tick.
+/// in order over USB and runs the idle tick.
 #[embassy_executor::task]
 async fn rig(mut rig: Rig, mut board: RealBoard) {
     let mut ticker = Ticker::every(TICK);
     let mut reply = [0; MAX_PAYLOAD];
     loop {
         // The tick goes first, so a stream of requests can't starve it.
-        let request = match select(ticker.next(), REQUESTS.receive()).await {
+        let request = match select(ticker.next(), usb::MAILBOX.next_request()).await {
             Either::First(()) => {
                 rig.tick(&mut board);
                 board.tick();
@@ -75,9 +66,9 @@ async fn rig(mut rig: Rig, mut board: RealBoard) {
             }
             Either::Second(request) => request,
         };
-        let frame = request.frame.as_ref().map(Payload::as_bytes).map_err(|&error| error);
+        let frame = request.as_ref().map(Payload::as_bytes).map_err(|&error| error);
         let Handled::Reply { len, settle } =
-            rig.receive(frame, &mut board, &request.from, &mut reply)
+            rig.receive(frame, &mut board, &usb::MAILBOX, &mut reply)
         else {
             continue;
         };
@@ -87,7 +78,7 @@ async fn rig(mut rig: Rig, mut board: RealBoard) {
         // A client flooding requests fills the replies with `Busy`, which
         // could keep this reply waiting for room until `rig` misses its
         // deadline: drop it instead, and the client retries.
-        let _ = with_timeout(REPLY_TIMEOUT, request.from.reply(Payload::new(&reply[..len]))).await;
+        let _ = with_timeout(REPLY_TIMEOUT, usb::MAILBOX.reply(Payload::new(&reply[..len]))).await;
     }
 }
 

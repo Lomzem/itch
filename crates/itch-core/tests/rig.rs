@@ -2,9 +2,7 @@ mod common;
 
 use common::{FakeBoard, TestRig, cases, hex, vectors};
 use itch_core::frame::MAX_PAYLOAD;
-use itch_core::wire::{
-    ErrorCode, FEATURE_WIFI, HelloReply, LogLevel, Message, Reply, Request, Response,
-};
+use itch_core::wire::{ErrorCode, HelloReply, LogLevel, Message, Reply, Request, Response};
 
 #[test]
 fn hello_reports_the_rig_identity_and_default_label() {
@@ -14,10 +12,9 @@ fn hello_reports_the_rig_identity_and_default_label() {
         Ok(Message::Response {
             request_id: 0x1234_5678,
             response: Response::Ok(Reply::Hello(HelloReply {
-                protocol: 1,
+                protocol: 2,
                 firmware_version: "1.0.0",
                 dirty: false,
-                features: 0,
                 channel_count: 16,
                 board_revision: "A",
                 hardware_id: [0x60, 0x55, 0xF9, 0xC0, 0x27, 0x18],
@@ -31,7 +28,6 @@ fn hello_reports_the_rig_identity_and_default_label() {
 fn hello_reports_a_development_build() {
     let mut board = FakeBoard::new();
     board.info.dirty = true;
-    board.info.features = FEATURE_WIFI;
     let reply = handle(board, &request(1, Request::Hello)).unwrap();
     let Ok(Message::Response { response: Response::Ok(Reply::Hello(hello)), .. }) =
         Message::decode(&reply)
@@ -39,7 +35,6 @@ fn hello_reports_a_development_build() {
         panic!("not a Hello reply");
     };
     assert!(hello.dirty);
-    assert_eq!(hello.features, FEATURE_WIFI);
 }
 
 /// Payloads under 5 bytes have no `request_id` and get no reply. The rest
@@ -68,10 +63,10 @@ fn malformed_requests_get_the_error_the_vectors_give() {
 }
 
 #[test]
-fn set_log_level_sets_the_level_of_the_calling_connection() {
+fn set_log_level_updates_the_supplied_log_control() {
     let mut rig = TestRig::new();
     assert_eq!(rig.ok(Request::SetLogLevel { level: LogLevel::Info }), Reply::SetLogLevel);
-    assert_eq!(rig.connection.log_level.get(), LogLevel::Info);
+    assert_eq!(rig.logs.log_level.get(), LogLevel::Info);
 }
 
 #[test]

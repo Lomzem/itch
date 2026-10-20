@@ -15,14 +15,11 @@ use itch_core::rig::{Handled, Rig, SETTLE_MS};
 use logs::ConnectionLogs;
 use sim_board::SimBoard;
 
-const USAGE: &str = "usage: itch-sim [--bind ADDR] [--clock-rate N] [--hardware-fault]
+const USAGE: &str = "usage: itch-sim [--bind ADDR] [--hardware-fault]
                 [--storage-fault]
 
 Serves a simulated Rig over TCP, by default on 127.0.0.1 with a free port.
 Once listening it prints one line: `itch-sim listening on tcp://HOST:PORT`.
-
---clock-rate N runs the Rig's clock N times faster than real time, so a test
-can let a Lease lapse without waiting 10 s.
 
 --hardware-fault simulates a Channel expander that never answers.
 --storage-fault makes every label save fail with `StorageFault`.
@@ -40,7 +37,6 @@ struct Sim {
 
 fn main() -> ExitCode {
     let mut bind = String::from("127.0.0.1:0");
-    let mut clock_rate = 1;
     let mut hardware_fault = false;
     let mut storage_fault = false;
     let mut args = std::env::args().skip(1);
@@ -53,10 +49,6 @@ fn main() -> ExitCode {
             "--bind" => match args.next() {
                 Some(addr) => bind = addr,
                 None => return usage(),
-            },
-            "--clock-rate" => match args.next().map(|rate| rate.parse()) {
-                Some(Ok(rate)) if rate > 0 => clock_rate = rate,
-                _ => return usage(),
             },
             "--hardware-fault" => hardware_fault = true,
             "--storage-fault" => storage_fault = true,
@@ -74,7 +66,7 @@ fn main() -> ExitCode {
     println!("itch-sim listening on tcp://{}", listener.local_addr().unwrap());
     logs::init();
 
-    let mut board = SimBoard::new(clock_rate, hardware_fault, storage_fault);
+    let mut board = SimBoard::new(hardware_fault, storage_fault);
     let sim = Sim { rig: Rig::new(&mut board), board };
     let sim = Arc::new(Mutex::new(sim));
     thread::spawn({

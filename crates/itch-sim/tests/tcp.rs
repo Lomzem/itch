@@ -1,32 +1,70 @@
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::SETTLE_MS;
 use itch_core::wire::{
-    AcquireLease, ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request,
-    Response, SetLabel, StatusReply, WriteChannels,
+    ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, Reply, Request, Response, SetLabel,
+    StatusReply, WriteChannels,
 };
 
 #[test]
 fn answers_hello_over_tcp() {
     let sim = Sim::start();
     let hello = hello(&mut sim.connect(), 7);
-    assert_eq!(hello.protocol, 1);
+    assert_eq!(hello.protocol, 2);
     assert_eq!(hello.channel_count, 16);
     assert_eq!(hello.board_revision, "sim");
     assert!(hello.label.starts_with("itch-"), "{}", hello.label);
 }
 
 #[test]
-fn serves_several_connections_at_once() {
+fn channel_state_survives_disconnects_and_is_shared_between_clients() {
     let sim = Sim::start();
-    let mut idle = sim.connect();
+    let mut first = sim.connect();
     let mut other = sim.connect();
-    hello(&mut other, 1);
-    hello(&mut idle, 2);
+    assert_eq!(
+        exchange(
+            &mut first,
+            1,
+            Request::WriteChannels(WriteChannels { mask: 0x0001, values: 0x0001 }),
+        ),
+        Response::Ok(Reply::WriteChannels { state: 0x0001 })
+    );
+    assert_eq!(
+        exchange(
+            &mut other,
+            1,
+            Request::WriteChannels(WriteChannels { mask: 0x8000, values: 0x8000 }),
+        ),
+        Response::Ok(Reply::WriteChannels { state: 0x8001 })
+    );
+    assert_eq!(
+        exchange(&mut first, 2, Request::GetChannels),
+        Response::Ok(Reply::GetChannels { state: 0x8001 })
+    );
+    disconnect(first);
+    assert_eq!(
+        exchange(&mut other, 2, Request::GetChannels),
+        Response::Ok(Reply::GetChannels { state: 0x8001 })
+    );
+    disconnect(other);
+
+    let mut reconnected = sim.connect();
+    assert_eq!(
+        exchange(&mut reconnected, 1, Request::GetChannels),
+        Response::Ok(Reply::GetChannels { state: 0x8001 })
+    );
+    assert_eq!(
+        exchange(&mut reconnected, 2, Request::Clear),
+        Response::Ok(Reply::Clear { state: 0 })
+    );
+    assert_eq!(
+        exchange(&mut sim.connect(), 1, Request::GetChannels),
+        Response::Ok(Reply::GetChannels { state: 0 })
+    );
 }
 
 #[test]
@@ -67,7 +105,7 @@ fn sends_no_logs_by_default() {
 fn a_write_replies_after_the_contacts_settle() {
     let sim = Sim::start();
     let mut stream = sim.connect();
-    let write = WriteChannels { token: 1, mask: 0x8001, values: 0x8001 };
+    let write = WriteChannels { mask: 0x8001, values: 0x8001 };
     let started = Instant::now();
     let reply = exchange(&mut stream, 3, Request::WriteChannels(write));
     assert!(started.elapsed() >= Duration::from_millis(SETTLE_MS));
@@ -98,7 +136,6 @@ fn status_counts_bad_frames_from_every_connection() {
             uptime_ms: 0,
             reset_reason: 0x01,
             last_panic: "",
-            holder: "",
             crc_failures: 1,
             oversized_frames: 0,
             malformed_frames: 1,
@@ -113,7 +150,7 @@ fn status_counts_bad_frames_from_every_connection() {
 fn a_hardware_fault_holds_every_channel_off_and_refuses_writes() {
     let sim = Sim::start_with(&["--hardware-fault"]);
     let mut stream = sim.connect();
-    let write = WriteChannels { token: 1, mask: 0x8001, values: 0x8001 };
+    let write = WriteChannels { mask: 0x8001, values: 0x8001 };
     let reply = exchange(&mut stream, 1, Request::WriteChannels(write));
     assert!(matches!(reply, Response::Err { error: ErrorCode::HardwareFault, .. }), "{reply:?}");
     let reply = exchange(&mut stream, 2, Request::GetChannels);
@@ -139,25 +176,9 @@ fn a_hardware_fault_is_found_by_the_idle_tick() {
 }
 
 #[test]
-fn a_faster_clock_lets_a_lease_lapse_in_real_milliseconds() {
-    let sim = Sim::start_with(&["--clock-rate", "1000"]);
-    let mut stream = sim.connect();
-    let acquire =
-        |token| Request::AcquireLease(AcquireLease { token, takeover: false, holder: "" });
-    exchange(&mut stream, 1, acquire(1));
-    let Response::Err { error, .. } = exchange(&mut stream, 2, acquire(2)) else {
-        panic!("a live Lease was taken");
-    };
-    assert_eq!(error, ErrorCode::LeaseHeld);
-    std::thread::sleep(Duration::from_millis(20));
-    let reply = exchange(&mut stream, 3, acquire(2));
-    assert_eq!(reply, Response::Ok(Reply::AcquireLease { ttl_ms: 10_000 }));
-}
-
-#[test]
 fn a_label_lasts_for_the_run_unless_storage_faults() {
     let sim = Sim::start();
-    let set = |label| Request::SetLabel(SetLabel { token: 1, label });
+    let set = |label| Request::SetLabel(SetLabel { label });
     exchange(&mut sim.connect(), 1, set("bench3"));
     assert_eq!(hello(&mut sim.connect(), 2).label, "bench3");
 
@@ -232,6 +253,12 @@ fn next_log(stream: &mut TcpStream) -> LogEvent<'static> {
         Message::Event(Event::Log(log)) => log,
         other => panic!("not a Log Event: {other:?}"),
     }
+}
+
+/// Waits for the server to finish this connection before checking retained state.
+fn disconnect(mut stream: TcpStream) {
+    stream.shutdown(Shutdown::Write).unwrap();
+    assert_eq!(stream.read(&mut [0]).unwrap(), 0);
 }
 
 fn request(request_id: u32, request: Request) -> Vec<u8> {

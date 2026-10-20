@@ -1,7 +1,6 @@
 use crate::board::{Board, StorageFault};
 use crate::frame::{FrameError, MAX_PAYLOAD};
 use crate::label::Label;
-use crate::lease::{self, Lease};
 use crate::wire::{
     CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, LogLevel, PROTOCOL, Reply, Request,
     StatusReply, decode_request,
@@ -22,9 +21,9 @@ pub enum Handled {
     Reply { len: usize, settle: bool },
 }
 
-/// The connection a frame came in on, as the Rig sees it.
-pub trait Connection {
-    /// Sends this connection the Log Events at `level` and below from now
+/// Controls which Log Events the calling stream receives.
+pub trait LogControl {
+    /// Sends the calling stream the Log Events at `level` and below from now
     /// on, and none of those queued before.
     fn set_log_level(&self, level: LogLevel);
 }
@@ -32,7 +31,6 @@ pub trait Connection {
 /// The Rig's protocol logic. It does no I/O: the transport feeds it decoded
 /// frames and sends back what it writes.
 pub struct Rig {
-    lease: Lease,
     /// The label `Hello` reports.
     label: Label,
     /// The commanded Channel state, bit 0 = CH1.
@@ -58,7 +56,6 @@ impl Rig {
             .filter(|label| !label.as_str().is_empty())
             .unwrap_or_else(|| Label::default_for(board.info().hardware_id));
         Self {
-            lease: Lease::default(),
             label,
             channels: 0,
             crc_failures: 0,
@@ -69,13 +66,13 @@ impl Rig {
         }
     }
 
-    /// Answers one frame that came in on `connection`, writing the reply
-    /// payload into `reply`. A frame the decoder dropped is counted.
+    /// Answers one frame from the stream controlled by `logs`, writing its
+    /// reply payload into `reply`. A frame the decoder dropped is counted.
     pub fn receive<B: Board>(
         &mut self,
         frame: Result<&[u8], FrameError>,
         board: &mut B,
-        connection: &impl Connection,
+        logs: &impl LogControl,
         reply: &mut [u8; MAX_PAYLOAD],
     ) -> Handled {
         let request = match frame {
@@ -96,7 +93,7 @@ impl Rig {
             return Handled::NoReply;
         };
         if let Ok(Request::SetLogLevel { level }) = decoded {
-            connection.set_log_level(level);
+            logs.set_log_level(level);
         }
         let result = match decoded {
             Ok(request) => self.apply(request, board),
@@ -116,7 +113,7 @@ impl Rig {
         let settle = matches!(result, Ok(Reply::WriteChannels { .. } | Reply::Clear { .. }));
         let response = match result {
             Ok(reply) => header.reply(reply),
-            Err(error) => header.error(error, self.detail(error)),
+            Err(error) => header.error(error, ""),
         };
         Handled::Reply { len: response.encode(reply), settle }
     }
@@ -133,17 +130,7 @@ impl Rig {
         let _ = self.recover(board, self.channels);
     }
 
-    /// The `detail` of an error reply: who holds the Rig, for the Lease errors.
-    fn detail(&self, error: ErrorCode) -> &str {
-        match error {
-            ErrorCode::LeaseHeld | ErrorCode::LeaseLost => self.lease.holder(),
-            _ => "",
-        }
-    }
-
     fn apply<B: Board>(&mut self, request: Request, board: &mut B) -> Result<Reply<'_>, ErrorCode> {
-        let now = board.now();
-        self.lease.expire(now);
         Ok(match request {
             Request::Hello => {
                 let info = board.info();
@@ -151,14 +138,13 @@ impl Rig {
                     protocol: PROTOCOL,
                     firmware_version: info.firmware_version,
                     dirty: info.dirty,
-                    features: info.features,
                     channel_count: CHANNEL_COUNT,
                     board_revision: info.board_revision,
                     hardware_id: info.hardware_id,
                     label: self.label.as_str(),
                 })
             }
-            // Applied to the connection in `receive`.
+            // Applied to the log control in `receive`.
             Request::SetLogLevel { .. } => Reply::SetLogLevel,
             Request::GetChannels => {
                 Reply::GetChannels { state: if self.held_in_reset { 0 } else { self.channels } }
@@ -167,10 +153,9 @@ impl Rig {
                 let info = board.info();
                 let counters = board.counters();
                 Reply::GetStatus(StatusReply {
-                    uptime_ms: now,
+                    uptime_ms: board.now(),
                     reset_reason: info.reset_reason,
                     last_panic: info.last_panic,
-                    holder: self.lease.holder(),
                     crc_failures: self.crc_failures,
                     oversized_frames: self.oversized_frames,
                     malformed_frames: self.malformed_frames,
@@ -180,30 +165,13 @@ impl Rig {
                 })
             }
             Request::WriteChannels(write) => {
-                self.lease.hold(write.token, None, now)?;
                 let state = self.channels & !write.mask | write.values & write.mask;
                 Reply::WriteChannels { state: self.write(board, state)? }
             }
-            Request::Clear { token } => {
-                self.lease.hold(token, None, now)?;
-                Reply::Clear { state: self.write(board, 0)? }
-            }
+            Request::Clear => Reply::Clear { state: self.write(board, 0)? },
             Request::SetLabel(set) => {
-                self.lease.hold(set.token, None, now)?;
                 self.set_label(board, set.label)?;
                 Reply::SetLabel { label: self.label.as_str() }
-            }
-            Request::AcquireLease(acquire) => {
-                self.lease.acquire(acquire.token, acquire.takeover, acquire.holder, now)?;
-                Reply::AcquireLease { ttl_ms: lease::TTL_MS }
-            }
-            Request::RenewLease(renew) => {
-                self.lease.hold(renew.token, Some(renew.holder), now)?;
-                Reply::RenewLease
-            }
-            Request::ReleaseLease { token } => {
-                self.lease.release(token);
-                Reply::ReleaseLease
             }
         })
     }

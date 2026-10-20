@@ -1,10 +1,8 @@
-//! Where the transports meet the `rig` task: the request queue every
-//! transport feeds, and each transport's [`Mailbox`] for what goes back out.
+//! The USB exchange with the `rig` task: bounded requests, replies and
+//! Log Events, with replies sent first.
 
 use core::cell::RefCell;
 use core::fmt;
-use core::future::poll_fn;
-use core::sync::atomic::{AtomicU32, Ordering};
 
 use embassy_futures::select::select;
 use embassy_sync::blocking_mutex::Mutex;
@@ -13,72 +11,62 @@ use embassy_sync::channel::{Channel, TrySendError};
 use embassy_sync::signal::Signal;
 use itch_core::frame::{FrameError, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::logs::{LogDropped, LogQueue};
-use itch_core::rig::Connection;
+use itch_core::rig::LogControl;
 use itch_core::wire::{ErrorCode, LogLevel, decode_request};
 
-/// How many frames may wait for the `rig` task. A transport answers `Busy`
-/// itself when the queue is full.
-pub const DEPTH: usize = 4;
+/// How many frames may wait for the `rig` task. Additional requests get
+/// `Busy` without waiting for the task.
+const DEPTH: usize = 4;
 
-/// Room in each mailbox for one full-length Log Event or many short ones.
+/// Room for one full-length Log Event or many short ones.
 const LOG_BYTES: usize = 4 * 1024;
 
-/// Frames waiting for the `rig` task, in arrival order.
-pub type Requests = Channel<CriticalSectionRawMutex, Queued, DEPTH>;
-
-/// The request queue every transport feeds.
-pub static REQUESTS: Requests = Channel::new();
-
-/// A frame waiting for the `rig` task.
-pub struct Queued {
-    /// Where its reply goes.
-    pub from: Origin,
-    pub frame: Result<Payload, FrameError>,
-}
-
-/// One transport's mailbox. It serves one connection at a time: the
-/// connection's frames go to the request queue, and its replies and Log
-/// Events wait here for the transport's writer, replies first.
+/// Requests waiting for the Rig and replies and Log Events waiting for
+/// the USB writer. Log filtering lasts until changed or the Rig reboots.
 pub struct Mailbox {
-    requests: &'static Requests,
+    requests: Channel<CriticalSectionRawMutex, Result<Payload, FrameError>, DEPTH>,
     replies: Channel<CriticalSectionRawMutex, Payload, 2>,
-    /// Filtered by the connection's log level, which is off between
-    /// connections.
+    /// Filtered by the selected log level, initially off.
     logs: Mutex<CriticalSectionRawMutex, RefCell<LogQueue<LOG_BYTES>>>,
     /// Wakes the writer after a log line is queued.
     logged: Signal<CriticalSectionRawMutex, ()>,
-    /// The generation of the connection served, bumped whenever one starts
-    /// or ends, so nothing meant for one reaches the next.
-    connection: AtomicU32,
 }
 
 impl Mailbox {
-    pub const fn new(requests: &'static Requests) -> Self {
+    pub const fn new() -> Self {
         Self {
-            requests,
+            requests: Channel::new(),
             replies: Channel::new(),
             logs: Mutex::new(RefCell::new(LogQueue::new())),
             logged: Signal::new(),
-            connection: AtomicU32::new(0),
         }
     }
 
-    /// Starts serving a new connection, with logs off and none of an
-    /// earlier one's replies. Returns where its frames come from.
-    pub fn connect(&'static self) -> Origin {
-        self.disconnect();
-        Origin { mailbox: self, connection: self.connection.load(Ordering::Relaxed) }
+    /// Queues a decoded frame for the Rig, payload or error. A request
+    /// that finds the queue full gets `Busy` at once. An error takes a
+    /// place too, and one that finds it full goes uncounted (ADR 0004).
+    pub fn submit(&self, frame: Result<&[u8], FrameError>) {
+        if let Err(TrySendError::Full(Ok(payload))) =
+            self.requests.try_send(frame.map(Payload::new))
+            && let Some(busy) = busy(payload.as_bytes())
+        {
+            // With replies backed up too, the client times out and retries.
+            let _ = self.replies.try_send(busy);
+        }
     }
 
-    /// Stops serving the connection. Its replies are dropped, including one
-    /// the `rig` task is waiting to queue.
-    pub fn disconnect(&self) {
-        self.connection.fetch_add(1, Ordering::Relaxed);
-        self.replies.clear();
-        self.logs.lock(|logs| logs.borrow_mut().set_level(LogLevel::Off));
+    /// Waits for the next decoded frame, in arrival order.
+    pub async fn next_request(&self) -> Result<Payload, FrameError> {
+        self.requests.receive().await
     }
 
-    /// Queues one log line for the connection, if its level lets it
+    /// Queues a reply once there is room. The Rig task bounds its wait
+    /// so a host flooding requests cannot stall hardware supervision.
+    pub async fn reply(&self, reply: Payload) {
+        self.replies.send(reply).await;
+    }
+
+    /// Queues one log line if the selected level lets it
     /// through. `LogDropped` when the queue is full: count it.
     pub fn log(&self, level: log::Level, args: fmt::Arguments) -> Result<(), LogDropped> {
         let pushed = self.logs.lock(|logs| logs.borrow_mut().push(level, args));
@@ -102,56 +90,15 @@ impl Mailbox {
     }
 }
 
-/// One connection on a mailbox, where its frames come from and its replies
-/// go back to.
-#[derive(Clone, Copy)]
-pub struct Origin {
-    mailbox: &'static Mailbox,
-    connection: u32,
-}
-
-impl Origin {
-    /// Queues a frame the transport decoded, payload or error, for the Rig,
-    /// which counts the errors. A request that finds the queue full is
-    /// answered `Busy` at once. An error takes a place in the queue too, and
-    /// one that finds it full goes uncounted: corrupt frames come singly, as
-    /// from a client joining mid-stream, so neither costs a request (ADR
-    /// 0004).
-    pub fn receive(self, frame: Result<&[u8], FrameError>) {
-        let request = Queued { from: self, frame: frame.map(Payload::new) };
-        if let Err(TrySendError::Full(request)) = self.mailbox.requests.try_send(request)
-            && let Ok(payload) = request.frame
-            && let Some(busy) = busy(payload.as_bytes())
-        {
-            // With replies backed up too, the client times out and retries.
-            let _ = self.mailbox.replies.try_send(busy);
-        }
-    }
-
-    /// Queues `reply` once there is room, or drops it once the connection
-    /// has ended.
-    pub async fn reply(self, mut reply: Payload) {
-        let replies = &self.mailbox.replies;
-        // Checked again after every wait: the connection may end meanwhile.
-        while self.is_current() {
-            match replies.try_send(reply) {
-                Ok(()) => return,
-                Err(TrySendError::Full(full)) => reply = full,
-            }
-            poll_fn(|cx| replies.poll_ready_to_send(cx)).await;
-        }
-    }
-
-    fn is_current(self) -> bool {
-        self.connection == self.mailbox.connection.load(Ordering::Relaxed)
+impl Default for Mailbox {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-impl Connection for Origin {
+impl LogControl for Mailbox {
     fn set_log_level(&self, level: LogLevel) {
-        if self.is_current() {
-            self.mailbox.logs.lock(|logs| logs.borrow_mut().set_level(level));
-        }
+        self.logs.lock(|logs| logs.borrow_mut().set_level(level));
     }
 }
 

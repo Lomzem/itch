@@ -2,13 +2,15 @@
 
 Bench checks for an itch Rig: an ESP32-S3 driving 16 Channels (CH1–16) through an I2C I/O expander, with the expander's RESET on GPIO6. Code that a host test can reach is tested by `cargo test`; this list covers what only real hardware shows.
 
-- **Full run:** every item below, before v1 ships and again after any hardware, esp-hal or esp-rtos change.
+- **Full run:** every item below, before firmware ships and again after any hardware, esp-hal or esp-rtos change.
 - **Per-Rig run:** only the items marked **[per-Rig]**, before each new Rig goes to QA. They take a few minutes.
 
 > [!WARNING]
 > **Never erase the whole chip** (`espflash erase-flash`, or esptool's `erase_flash`). The Rig's label lives in the `settings` partition, and a full erase loses it. Reflash with `cargo +esp flash-firmware`, or with a merged image saved with `--skip-padding` (see the [README](../../README.md#firmware)). Both leave the label alone.
 
 The examples use a made-up Rig with Hardware ID `60:55:F9:C0:27:18`, so its default label is `itch-C02718`. No DUT is needed: check the contacts themselves with a meter or a logic analyser.
+
+Use a client adapted to [protocol 2](../protocol/README.md); older released clients use the former wire layout. Client interface examples below illustrate the bench actions, while the wire contract lives in `docs/protocol/`.
 
 ## Tools
 
@@ -17,7 +19,6 @@ The examples use a made-up Rig with Hardware ID `60:55:F9:C0:27:18`, so its defa
 - A continuity meter, and a scope or a logic analyser with enough inputs for GPIO6 and all 16 contacts. Use a pull-up on each contact.
 - A jumper wire to short SDA (GPIO5) or the expander RESET (GPIO6) to GND.
 - A second Rig, for the discovery checks.
-- For the WiFi checks only: a WPA2 network the dev controls.
 
 ## Where the tunable figures live
 
@@ -53,7 +54,7 @@ The examples use a made-up Rig with Hardware ID `60:55:F9:C0:27:18`, so its defa
 
 ## 4. Each Channel on and off **[per-Rig]**
 
-- **Method:** inside `rig.session()`, call `rig.set_channel(n, "on")` for n = 1…16, measure the contact, then turn it off and measure again.
+- **Method:** call `rig.set_channel(n, "on")` for n = 1…16, measure the contact, then turn it off and measure again.
 - **Pass:** only CH*n*'s contact closes, then it opens again. The status LED (GPIO15) is lit while any Channel is on.
 - **If it fails:** a wrong or swapped contact means the Channel map `CHANNELS` in `crates/itch-firmware/src/board.rs` is wrong (CH1–8 → GPB7…GPB0, CH9–16 → GPA7…GPA0). LED behaviour is in `show_status`, in the same file.
 
@@ -89,7 +90,7 @@ USB full-speed bulk packets are 64 B, so frames whose size falls on or around a 
 
 - **Method:** with itch-py's `itch._frame.encode_frame`, build frames of exactly 63, 64, 65, 128 and 192 B, delimiters included, and write them raw to the port.
   - **Host → Rig:** a payload with an unknown request type can be any size. The Rig answers it with an `UnknownRequest` error.
-  - **Rig → host:** vary the Holder length (`session(holder=…)`) to move the `GetStatus` reply across 63–65 and 128 B. Turn on debug logs to get longer Log Events. Decode everything received with `itch._frame.FrameDecoder`.
+  - **Rig → host:** vary the Label length and read `Hello` to move the reply around 64 B. For longer frames, use a throwaway scratch build that emits controlled-length Log Events, covering 128 and 192 B as well. Decode everything received with `itch._frame.FrameDecoder`; do not commit the scratch logging.
 - **Pass:** every host → Rig frame gets an `UnknownRequest` reply carrying its request ID, and `crc_failures`, `oversized_frames` and `malformed_frames` stay unchanged. Every Rig → host frame decodes, with no request timing out.
 - **If it fails:** the receive path is `usb_rx` in `crates/itch-firmware/src/usb.rs`, which reads 64 B at a time into a persistent `FrameDecoder`. On the send side, `usb_tx` must `flush()` after each frame; that flush sends the zero-length packet a multiple-of-64 transfer needs.
 
@@ -140,7 +141,7 @@ Each case needs a throwaway build from a scratch branch; don't commit it. Make t
 
 ## 14. Flash stall
 
-- **Method:** inside a session, time 100 back-to-back `set_label` calls, each with a different 64-byte label. Then carry on, about 2,000 writes in all, until the 64 KiB `settings` partition has wrapped and erased sectors. Subtract a typical `status()` round trip from the longest `set_label` call; that difference is the stall. Then corrupt the partition so the next save erases all 16 sectors: write 64 KiB of random bytes to it (`head -c 65536 /dev/urandom > noise.bin`, then `espflash write-bin 0x400000 noise.bin`), boot, and time one `set_label`. Restore the label afterwards.
+- **Method:** time 100 back-to-back `set_label` calls, each with a different 64-byte label. Then carry on, about 2,000 writes in all, until the 64 KiB `settings` partition has wrapped and erased sectors. Subtract a typical `status()` round trip from the longest `set_label` call; that difference is the stall. Then corrupt the partition so the next save erases all 16 sectors: write 64 KiB of random bytes to it (`head -c 65536 /dev/urandom > noise.bin`, then `espflash write-bin 0x400000 noise.bin`), boot, and time one `set_label`. Restore the label afterwards.
 - **Pass:** the longest stall of a normal save is under 400 ms. The save after the corruption succeeds, however long it takes, even past `DEADLINE_MS`, and the label survives a power cycle. No call is followed by a watchdog reset: `uptime` keeps counting and `reset_reason` is unchanged.
 - **If it fails:** every flash operation goes through `Supervised` in `crates/itch-firmware/src/settings.rs`, which checks in before and after each one, with erases split per sector. Each check-in carries its time and feeds the RWDT, so only the gap between two check-ins counts, never the whole save. If a single erase or write still stalls too long, raise `DEADLINE_MS` and `WATCHDOG_TIMEOUT` (see the note under the table).
 
@@ -149,14 +150,3 @@ Each case needs a throwaway build from a scratch branch; don't commit it. Make t
 - **Method:** scope one contact against the expander output that drives it. For each Channel, measure from the output edge to the contact's last bounce, both on and off. Repeat with all 16 switching together.
 - **Pass:** the worst value observed is below `SETTLE_MS`, with margin.
 - **If it fails:** raise `SETTLE_MS` in `crates/itch-core/src/rig.rs` above the worst value observed. Firmware and simulator both wait that long before replying to `WriteChannels` and `Clear`.
-
-## 16. Development WiFi build
-
-ADR 0003 applies: never give a WiFi build to QA.
-
-- **Method:** on the production build, check that `Rig.connect()` gives no development-build warning. Then build with `ITCH_WIFI_SSID`/`ITCH_WIFI_PASSWORD` set and run `cargo +esp flash-firmware-wifi`.
-  - Logs before a client sets a level are dropped, so read the Rig's IP from the router, or connect over USB with logs on before WiFi comes up.
-  - Then run `Rig.connect("tcp://<ip>:7878")`.
-- **Pass:** itch-py warns that this is a development build. Channels switch over TCP, and USB keeps working alongside. Only one TCP client is served at a time. After the network drops and returns, the Rig rejoins.
-- **If it fails:** see `crates/itch-firmware/src/tcp.rs`.
-- **Don't share:** WiFi logs include the network name, so keep those captures private.

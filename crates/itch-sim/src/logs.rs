@@ -5,7 +5,7 @@ use std::sync::{Arc, Condvar, Mutex};
 
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::logs::LogQueue;
-use itch_core::rig::Connection;
+use itch_core::rig::LogControl;
 use itch_core::wire::LogLevel;
 use log::{LevelFilter, Log, Metadata, Record};
 
@@ -91,7 +91,7 @@ impl ConnectionLogs {
     }
 }
 
-impl Connection for ConnectionLogs {
+impl LogControl for ConnectionLogs {
     fn set_log_level(&self, level: LogLevel) {
         self.state.lock().unwrap().queue.set_level(level);
     }

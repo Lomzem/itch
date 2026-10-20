@@ -3,8 +3,8 @@ mod common;
 use common::{cases, hex, vectors};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::wire::{
-    AcquireLease, DecodeError, ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, PROTOCOL,
-    RenewLease, Reply, Request, RequestType, Response, SetLabel, StatusReply, WriteChannels,
+    DecodeError, ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, PROTOCOL, Reply,
+    Request, RequestType, Response, SetLabel, StatusReply, WriteChannels,
 };
 use serde_json::Value;
 
@@ -77,9 +77,6 @@ fn request_type(name: &str) -> RequestType {
         "Clear" => RequestType::Clear,
         "GetStatus" => RequestType::GetStatus,
         "SetLabel" => RequestType::SetLabel,
-        "AcquireLease" => RequestType::AcquireLease,
-        "RenewLease" => RequestType::RenewLease,
-        "ReleaseLease" => RequestType::ReleaseLease,
         "SetLogLevel" => RequestType::SetLogLevel,
         _ => panic!("unknown request type {name}"),
     }
@@ -90,26 +87,14 @@ fn request(request_type: RequestType, json: &Value) -> Request<'_> {
         RequestType::Hello => Request::Hello,
         RequestType::GetChannels => Request::GetChannels,
         RequestType::WriteChannels => Request::WriteChannels(WriteChannels {
-            token: token(&json["token"]),
             mask: int(&json["mask"]),
             values: int(&json["values"]),
         }),
-        RequestType::Clear => Request::Clear { token: token(&json["token"]) },
+        RequestType::Clear => Request::Clear,
         RequestType::GetStatus => Request::GetStatus,
-        RequestType::SetLabel => Request::SetLabel(SetLabel {
-            token: token(&json["token"]),
-            label: json["label"].as_str().unwrap(),
-        }),
-        RequestType::AcquireLease => Request::AcquireLease(AcquireLease {
-            token: token(&json["token"]),
-            takeover: json["takeover"].as_bool().unwrap(),
-            holder: json["holder"].as_str().unwrap(),
-        }),
-        RequestType::RenewLease => Request::RenewLease(RenewLease {
-            token: token(&json["token"]),
-            holder: json["holder"].as_str().unwrap(),
-        }),
-        RequestType::ReleaseLease => Request::ReleaseLease { token: token(&json["token"]) },
+        RequestType::SetLabel => {
+            Request::SetLabel(SetLabel { label: json["label"].as_str().unwrap() })
+        }
         RequestType::SetLogLevel => Request::SetLogLevel { level: log_level(&json["level"]) },
     }
 }
@@ -120,7 +105,6 @@ fn reply(request_type: RequestType, json: &Value) -> Reply<'_> {
             protocol: int(&json["protocol"]),
             firmware_version: json["firmware_version"].as_str().unwrap(),
             dirty: json["dirty"].as_bool().unwrap(),
-            features: int(&json["features"]),
             channel_count: int(&json["channel_count"]),
             board_revision: json["board_revision"].as_str().unwrap(),
             hardware_id: hex(json["hardware_id"].as_str().unwrap()).try_into().unwrap(),
@@ -133,7 +117,6 @@ fn reply(request_type: RequestType, json: &Value) -> Reply<'_> {
             uptime_ms: int(&json["uptime_ms"]),
             reset_reason: int(&json["reset_reason"]),
             last_panic: json["last_panic"].as_str().unwrap(),
-            holder: json["holder"].as_str().unwrap(),
             crc_failures: int(&json["crc_failures"]),
             oversized_frames: int(&json["oversized_frames"]),
             malformed_frames: int(&json["malformed_frames"]),
@@ -142,9 +125,6 @@ fn reply(request_type: RequestType, json: &Value) -> Reply<'_> {
             usb_tx_dropped: int(&json["usb_tx_dropped"]),
         }),
         RequestType::SetLabel => Reply::SetLabel { label: json["label"].as_str().unwrap() },
-        RequestType::AcquireLease => Reply::AcquireLease { ttl_ms: int(&json["ttl_ms"]) },
-        RequestType::RenewLease => Reply::RenewLease,
-        RequestType::ReleaseLease => Reply::ReleaseLease,
         RequestType::SetLogLevel => Reply::SetLogLevel,
     }
 }
@@ -166,28 +146,12 @@ fn log_level(json: &Value) -> LogLevel {
 
 fn error_code(name: &str) -> ErrorCode {
     use ErrorCode::*;
-    [
-        UnknownRequest,
-        UnsupportedVersion,
-        Malformed,
-        LeaseRequired,
-        LeaseHeld,
-        LeaseLost,
-        Busy,
-        HardwareFault,
-        StorageFault,
-        Internal,
-    ]
-    .into_iter()
-    .find(|code| format!("{code:?}") == name)
-    .unwrap_or_else(|| panic!("unknown error code {name}"))
+    [UnknownRequest, Malformed, Busy, HardwareFault, StorageFault, Internal]
+        .into_iter()
+        .find(|code| format!("{code:?}") == name)
+        .unwrap_or_else(|| panic!("unknown error code {name}"))
 }
 
 fn int<T: TryFrom<u64>>(json: &Value) -> T {
     T::try_from(json.as_u64().unwrap()).ok().unwrap()
-}
-
-/// A `u64` token, written as a `0x` hex string.
-fn token(json: &Value) -> u64 {
-    u64::from_str_radix(json.as_str().unwrap().strip_prefix("0x").unwrap(), 16).unwrap()
 }

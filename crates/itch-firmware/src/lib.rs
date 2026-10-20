@@ -12,7 +12,5 @@ pub mod logger;
 pub mod mailbox;
 pub mod settings;
 pub mod supervisor;
-#[cfg(feature = "wifi")]
-pub mod tcp;
 #[cfg(feature = "firmware")]
 pub mod usb;
