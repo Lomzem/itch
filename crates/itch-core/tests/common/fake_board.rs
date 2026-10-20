@@ -19,6 +19,7 @@ pub struct FakeBoard {
     pub torn_writes: bool,
     /// The clock in milliseconds, moved by hand.
     pub now: u64,
+    /// What the logger and transport writers have counted.
     pub counters: Counters,
     /// The label in storage, loaded at boot. `None` = no record.
     pub stored: Option<String>,

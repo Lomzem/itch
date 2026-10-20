@@ -29,16 +29,10 @@ pub fn encode_frame(payload: &[u8], out: &mut [u8; MAX_FRAME]) -> usize {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameError {
     /// Bad CRC, truncated COBS or a length that disagrees with the payload.
-    /// Counted in `crc_failures`.
+    /// Reported in `crc_failures`.
     Corrupt,
-    /// Over [`MAX_PAYLOAD`]. Counted in `oversized_frames`.
+    /// Over [`MAX_PAYLOAD`]. Reported in `oversized_frames`.
     Oversized,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct FrameCounters {
-    pub crc_failures: u32,
-    pub oversized_frames: u32,
 }
 
 /// Turns a byte stream into payloads, one byte at a time.
@@ -53,7 +47,6 @@ pub struct FrameDecoder {
     oversized: bool,
     block_left: u8,
     zero_pending: bool,
-    counters: FrameCounters,
 }
 
 impl FrameDecoder {
@@ -65,7 +58,6 @@ impl FrameDecoder {
             oversized: false,
             block_left: 0,
             zero_pending: false,
-            counters: FrameCounters { crc_failures: 0, oversized_frames: 0 },
         }
     }
 
@@ -89,10 +81,6 @@ impl FrameDecoder {
         None
     }
 
-    pub fn counters(&self) -> FrameCounters {
-        self.counters
-    }
-
     fn store(&mut self, byte: u8) {
         if self.len == MAX_LOGICAL {
             self.oversized = true;
@@ -114,12 +102,10 @@ impl FrameDecoder {
             return None;
         }
         if oversized {
-            self.counters.oversized_frames = self.counters.oversized_frames.wrapping_add(1);
             return Some(Err(FrameError::Oversized));
         }
         let logical = &self.buf[..len];
         if !complete || !is_valid(logical) {
-            self.counters.crc_failures = self.counters.crc_failures.wrapping_add(1);
             return Some(Err(FrameError::Corrupt));
         }
         Some(Ok(&self.buf[2..len - 2]))

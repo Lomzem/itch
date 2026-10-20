@@ -97,7 +97,7 @@ USB full-speed bulk packets are 64 B, so frames whose size falls on or around a 
 
 - **Method:** turn a Channel on, then from a raw serial handle write a burst of `GetStatus` frames, or turn on debug logs, and stop reading for 30 s. Resume, then reconnect with itch-py.
 - **Pass:** `uptime` has kept rising and `reset_reason` is unchanged. The Channel is still on, so there was no reboot or Clear. `usb_tx_dropped` (or `dropped_logs`) has risen, and the next frames decode normally.
-- **If it fails:** `usb_tx` in `crates/itch-firmware/src/usb.rs` drops the rest of a frame after `WRITE_TIMEOUT` and counts it in `TX_DROPPED`. Request back-pressure is `DEPTH` in `crates/itch-firmware/src/queue.rs`.
+- **If it fails:** `usb_tx` in `crates/itch-firmware/src/usb.rs` drops the rest of a frame after `WRITE_TIMEOUT` and counts it in `TX_DROPPED`. Request back-pressure is `DEPTH` in `crates/itch-firmware/src/mailbox.rs`.
 
 ## 10. Unplug and every reset type with Channels on
 

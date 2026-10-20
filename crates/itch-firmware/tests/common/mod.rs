@@ -3,7 +3,6 @@
 use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU32, Ordering};
 
 use embedded_hal::delay::DelayNs;
 use embedded_hal::digital::{ErrorType as PinErrorType, OutputPin};
@@ -13,11 +12,11 @@ use embedded_storage::nor_flash::{
 };
 use itch_core::board::{Board, Counters};
 use itch_core::frame::MAX_PAYLOAD;
-use itch_core::rig::{Handled, Rig};
-use itch_core::wire::{Message, Reply, Request, Response, SetLabel, WriteChannels};
+use itch_core::rig::{Connection, Handled, Rig};
+use itch_core::wire::{LogLevel, Message, Reply, Request, Response, SetLabel, WriteChannels};
 use itch_firmware::board::{Chip, RevA};
 use itch_firmware::settings::PARTITION;
-use itch_firmware::supervisor::{DEADLINE_MS, LAST_CHECK_IN, Latch, ResetLine, Supervisor};
+use itch_firmware::supervisor::{Check, Failsafe, Latch, ResetLine, Supervisor};
 
 const ADDRESS: u8 = 0x20;
 pub const IODIRA: u8 = 0x00;
@@ -216,9 +215,42 @@ pub fn advance(ms: u64) {
     CLOCK.with(|clock| clock.set(clock.get() + ms));
 }
 
-/// How long since `rig` last checked in with the global supervisor.
-pub fn since_check_in() -> u32 {
-    (now() as u32).wrapping_sub(LAST_CHECK_IN.load(Ordering::Relaxed))
+thread_local! {
+    /// The supervisor of the bench's `rig`, one per test, replaced at every
+    /// power-on.
+    static SUPERVISOR: RefCell<Option<Rc<Supervisor<'static, BenchFailsafe>>>> =
+        const { RefCell::new(None) };
+    /// When the supervisor last fed the watchdog, by the bench clock.
+    static FED: Cell<Option<u64>> = const { Cell::new(None) };
+}
+
+/// What the bench's supervisor acts through: a watchdog that only notes
+/// when it was fed, and the simulated expander's RESET.
+pub struct BenchFailsafe(Rc<RefCell<Expander>>);
+
+impl Failsafe for BenchFailsafe {
+    fn feed(&self) {
+        FED.with(|fed| fed.set(Some(now())));
+    }
+
+    fn force_reset_low(&self) {
+        self.0.borrow_mut().pull_reset();
+    }
+}
+
+fn supervisor() -> Rc<Supervisor<'static, BenchFailsafe>> {
+    SUPERVISOR.with(|supervisor| supervisor.borrow().clone().expect("a powered-on bench"))
+}
+
+/// `rig` checking in, as the board and the settings do.
+fn check_in(now: u64) {
+    supervisor().check_in(now);
+}
+
+/// How long since the supervisor last fed the watchdog, which it does on
+/// every check-in in time. `None` if it never has.
+pub fn since_fed() -> Option<u64> {
+    FED.with(Cell::get).map(|fed| now() - fed)
 }
 
 const SECTOR: usize = 4096;
@@ -232,9 +264,9 @@ pub struct Flash {
     pub broken: bool,
     /// How long each sector erase and each write stalls the chip.
     pub stall_ms: u64,
-    /// How long since `rig` last checked in, in ms, at the start of each
-    /// sector erase and each write, oldest first.
-    pub writes: Vec<u32>,
+    /// How long since the watchdog was last fed, in ms, at the start of
+    /// each sector erase and each write, oldest first.
+    pub writes: Vec<Option<u64>>,
 }
 
 impl Flash {
@@ -279,7 +311,7 @@ impl Flash {
     }
 
     fn change(&mut self) -> Result<(), NorFlashErrorKind> {
-        self.writes.push(since_check_in());
+        self.writes.push(since_fed());
         advance(self.stall_ms);
         if self.broken { Err(NorFlashErrorKind::Other) } else { Ok(()) }
     }
@@ -336,6 +368,14 @@ pub type FakeRevA = RevA<Bus, ResetLine<'static, ResetPin>, Led, NoDelay, FlashP
 
 const TOKEN: u64 = 0x0123_4567_89AB_CDEF;
 
+/// The connection the bench's requests come in on. Nothing here reads its
+/// Log Events.
+struct Usb;
+
+impl Connection for Usb {
+    fn set_log_level(&self, _: LogLevel) {}
+}
+
 /// A Rev A Rig on the bench: the Rig logic over the real board support, with
 /// a simulated expander and pins.
 pub struct Bench {
@@ -344,7 +384,6 @@ pub struct Bench {
     led: Rc<Cell<bool>>,
     pub board: FakeRevA,
     pub rig: Rig,
-    latch: &'static Latch,
 }
 
 impl Bench {
@@ -369,32 +408,38 @@ impl Bench {
                 reset_reason: 0x01,
                 last_panic: "",
                 now,
+                check_in,
                 counters: Counters::default,
             },
         );
+        let supervisor = Supervisor::new(latch, BenchFailsafe(Rc::clone(&expander)));
+        supervisor.start(now());
+        SUPERVISOR.with(|cell| cell.replace(Some(Rc::new(supervisor))));
         let rig = Rig::new(&mut board);
-        Self { expander, flash, led, board, rig, latch }
+        Self { expander, flash, led, board, rig }
     }
 
     /// Powers up and brings the expander up, as the firmware does at boot.
     pub fn boot() -> Self {
-        let mut bench = Self::power_on();
+        Self::boot_with(Flash::erased())
+    }
+
+    /// Boots on `flash`, as left by an earlier boot.
+    pub fn boot_with(flash: Rc<RefCell<Flash>>) -> Self {
+        let mut bench = Self::power_on_with(flash);
         bench.board.reinit().expect("the expander comes up");
         bench
     }
 
     /// Cuts the power and boots again: only the flash is kept.
     pub fn power_cycle(self) -> Self {
-        let mut bench = Self::power_on_with(self.flash);
-        bench.board.reinit().expect("the expander comes up");
-        bench
+        Self::boot_with(self.flash)
     }
 
-    /// Has the supervisor find that `rig` missed its deadline, as if the
-    /// `rig` task had stalled and is only now running again.
-    pub fn trip_supervisor(&mut self) {
-        Supervisor::new(self.latch, &AtomicU32::new(0)).check(DEADLINE_MS);
-        self.expander.borrow_mut().pull_reset();
+    /// Has the supervisor check on `rig` now, as its task does between
+    /// `rig`'s check-ins.
+    pub fn supervise(&self) -> Check {
+        supervisor().check(now())
     }
 
     /// Mask-writes the Channels through the Rig, bit 0 = CH1.
@@ -403,7 +448,7 @@ impl Bench {
         let mut payload = [0; MAX_PAYLOAD];
         let len = Message::Request { request_id: 1, request }.encode(&mut payload);
         let mut reply = [0; MAX_PAYLOAD];
-        let handled = self.rig.handle(&payload[..len], &mut self.board, &mut reply);
+        let handled = self.rig.receive(Ok(&payload[..len]), &mut self.board, &Usb, &mut reply);
         assert!(matches!(handled, Handled::Reply { .. }), "no reply: {handled:?}");
     }
 
@@ -430,7 +475,7 @@ impl Bench {
         let mut payload = [0; MAX_PAYLOAD];
         let len = Message::Request { request_id: 1, request }.encode(&mut payload);
         let mut reply = [0; MAX_PAYLOAD];
-        let len = match self.rig.handle(&payload[..len], &mut self.board, &mut reply) {
+        let len = match self.rig.receive(Ok(&payload[..len]), &mut self.board, &Usb, &mut reply) {
             Handled::Reply { len, .. } => len,
             handled => panic!("no reply: {handled:?}"),
         };

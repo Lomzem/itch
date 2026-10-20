@@ -2,6 +2,7 @@ mod common;
 
 use common::TestRig;
 use itch_core::board::Counters;
+use itch_core::frame::FrameError;
 use itch_core::wire::{AcquireLease, Reply, Request, StatusReply, WriteChannels};
 
 fn status(rig: &mut TestRig) -> StatusReply<'static> {
@@ -12,13 +13,15 @@ fn status(rig: &mut TestRig) -> StatusReply<'static> {
 }
 
 #[test]
-fn status_reports_uptime_reset_reason_last_panic_and_the_board_counters() {
+fn status_reports_uptime_reset_reason_last_panic_and_the_counters() {
     let mut rig = TestRig::new();
     rig.board.now = 3_723_000;
     rig.board.info.reset_reason = 0x03;
     rig.board.info.last_panic = "src/main.rs:88:5";
-    rig.board.counters =
-        Counters { crc_failures: 1, oversized_frames: 2, dropped_logs: 4, usb_tx_dropped: 6 };
+    rig.board.counters = Counters { dropped_logs: 4, usb_tx_dropped: 6 };
+    assert_eq!(rig.receive(Err(FrameError::Corrupt)), None);
+    assert_eq!(rig.receive(Err(FrameError::Oversized)), None);
+    assert_eq!(rig.receive(Err(FrameError::Oversized)), None);
     assert_eq!(
         status(&mut rig),
         StatusReply {

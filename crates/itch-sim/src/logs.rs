@@ -5,6 +5,7 @@ use std::sync::{Arc, Condvar, Mutex};
 
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::logs::LogQueue;
+use itch_core::rig::Connection;
 use itch_core::wire::LogLevel;
 use log::{LevelFilter, Log, Metadata, Record};
 
@@ -67,10 +68,6 @@ impl ConnectionLogs {
         connection
     }
 
-    pub fn set_level(&self, level: LogLevel) {
-        self.state.lock().unwrap().queue.set_level(level);
-    }
-
     /// Waits for the next Log Event and writes its payload into `out`.
     /// Returns `None` once the connection is closed.
     pub fn next_event(&self, out: &mut [u8; MAX_PAYLOAD]) -> Option<usize> {
@@ -91,5 +88,11 @@ impl ConnectionLogs {
         LOGGER.connections.lock().unwrap().retain(|other| !Arc::ptr_eq(other, self));
         self.state.lock().unwrap().closed = true;
         self.ready.notify_one();
+    }
+}
+
+impl Connection for ConnectionLogs {
+    fn set_log_level(&self, level: LogLevel) {
+        self.state.lock().unwrap().queue.set_level(level);
     }
 }

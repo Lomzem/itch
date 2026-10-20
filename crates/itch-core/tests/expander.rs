@@ -56,7 +56,7 @@ fn an_expander_that_does_not_come_back_holds_every_channel_off() {
     assert_eq!(rig.refused(write(0x0001, 0x0001)), ErrorCode::HardwareFault);
     assert_eq!(rig.refused(Request::Clear { token: TOKEN }), ErrorCode::HardwareFault);
     assert_eq!(rig.ok(Request::GetChannels), Reply::GetChannels { state: 0 });
-    assert!(!rig.settled);
+    assert!(!rig.settle);
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn a_write_that_hits_an_i2c_error_recovers_and_succeeds() {
     rig.ok(write(0xFFFF, 0x0102));
     rig.board.glitch = true;
     assert_eq!(rig.ok(write(0x0001, 0x0001)), Reply::WriteChannels { state: 0x0103 });
-    assert!(rig.settled);
+    assert!(rig.settle);
     assert_eq!(rig.board.channels, 0x0103);
     assert_eq!(expander_faults(&mut rig), 1);
 }

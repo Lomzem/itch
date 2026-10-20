@@ -7,14 +7,13 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_futures::select::{Either, select};
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::{Duration, Ticker, Timer, with_timeout};
 use esp_rtos::embassy::Executor;
 use itch_core::board::Board;
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, Rig, SETTLE_MS};
-use itch_core::wire::LogLevel;
 use itch_firmware::board::{self, RealBoard};
-use itch_firmware::queue::{self, Payload, Transport};
+use itch_firmware::mailbox::{Payload, REQUESTS};
 use itch_firmware::{logger, supervisor, usb};
 use static_cell::StaticCell;
 
@@ -22,6 +21,9 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 /// How often the `rig` task does its idle work.
 const TICK: Duration = Duration::from_millis(50);
+
+/// How long a reply may wait for room in its transport's mailbox.
+const REPLY_TIMEOUT: Duration = Duration::from_millis(100);
 
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 
@@ -65,45 +67,27 @@ async fn rig(mut rig: Rig, mut board: RealBoard) {
     let mut reply = [0; MAX_PAYLOAD];
     loop {
         // The tick goes first, so a stream of requests can't starve it.
-        let request = match select(ticker.next(), queue::REQUESTS.receive()).await {
+        let request = match select(ticker.next(), REQUESTS.receive()).await {
             Either::First(()) => {
                 rig.tick(&mut board);
                 board.tick();
-                supervisor::check_in(board.now());
                 continue;
             }
             Either::Second(request) => request,
         };
-        let len = match rig.handle(request.payload.as_bytes(), &mut board, &mut reply) {
-            Handled::NoReply => continue,
-            Handled::Reply { len, settle } => {
-                if settle {
-                    Timer::after_millis(SETTLE_MS).await;
-                }
-                len
-            }
-            Handled::SetLogLevel { len, level } => {
-                set_log_level(request.transport, level);
-                len
-            }
+        let frame = request.frame.as_ref().map(Payload::as_bytes).map_err(|&error| error);
+        let Handled::Reply { len, settle } =
+            rig.receive(frame, &mut board, &request.from, &mut reply)
+        else {
+            continue;
         };
-        send_reply(request.transport, Payload::new(&reply[..len])).await;
-    }
-}
-
-fn set_log_level(transport: Transport, level: LogLevel) {
-    match transport {
-        Transport::Usb => usb::set_log_level(level),
-        #[cfg(feature = "wifi")]
-        Transport::Tcp(connection) => itch_firmware::tcp::set_log_level(connection, level),
-    }
-}
-
-async fn send_reply(transport: Transport, reply: Payload) {
-    match transport {
-        Transport::Usb => usb::REPLIES.send(reply).await,
-        #[cfg(feature = "wifi")]
-        Transport::Tcp(connection) => itch_firmware::tcp::reply(connection, reply).await,
+        if settle {
+            Timer::after_millis(SETTLE_MS).await;
+        }
+        // A client flooding requests fills the replies with `Busy`, which
+        // could keep this reply waiting for room until `rig` misses its
+        // deadline: drop it instead, and the client retries.
+        let _ = with_timeout(REPLY_TIMEOUT, request.from.reply(Payload::new(&reply[..len]))).await;
     }
 }
 

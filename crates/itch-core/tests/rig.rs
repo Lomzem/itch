@@ -1,15 +1,14 @@
 mod common;
 
-use common::{FakeBoard, cases, hex, vectors};
+use common::{FakeBoard, TestRig, cases, hex, vectors};
 use itch_core::frame::MAX_PAYLOAD;
-use itch_core::rig::{Handled, Rig};
 use itch_core::wire::{
     ErrorCode, FEATURE_WIFI, HelloReply, LogLevel, Message, Reply, Request, Response,
 };
 
 #[test]
 fn hello_reports_the_rig_identity_and_default_label() {
-    let reply = handle(&mut FakeBoard::new(), &request(0x1234_5678, Request::Hello)).unwrap();
+    let reply = handle(FakeBoard::new(), &request(0x1234_5678, Request::Hello)).unwrap();
     assert_eq!(
         Message::decode(&reply),
         Ok(Message::Response {
@@ -33,7 +32,7 @@ fn hello_reports_a_development_build() {
     let mut board = FakeBoard::new();
     board.info.dirty = true;
     board.info.features = FEATURE_WIFI;
-    let reply = handle(&mut board, &request(1, Request::Hello)).unwrap();
+    let reply = handle(board, &request(1, Request::Hello)).unwrap();
     let Ok(Message::Response { response: Response::Ok(Reply::Hello(hello)), .. }) =
         Message::decode(&reply)
     else {
@@ -53,7 +52,7 @@ fn malformed_requests_get_the_error_the_vectors_give() {
         if payload[0] >= 0x40 {
             continue; // An Event or a reply, which only clients decode.
         }
-        let reply = handle(&mut FakeBoard::new(), &payload);
+        let reply = handle(FakeBoard::new(), &payload);
         if payload.len() < 5 {
             assert_eq!(reply, None, "{name}");
             continue;
@@ -69,25 +68,15 @@ fn malformed_requests_get_the_error_the_vectors_give() {
 }
 
 #[test]
-fn set_log_level_hands_the_level_to_the_calling_connection() {
-    let mut reply = [0; MAX_PAYLOAD];
-    let request = request(9, Request::SetLogLevel { level: LogLevel::Info });
-    let mut board = FakeBoard::new();
-    let Handled::SetLogLevel { len, level } =
-        Rig::new(&mut board).handle(&request, &mut board, &mut reply)
-    else {
-        panic!("not a SetLogLevel");
-    };
-    assert_eq!(level, LogLevel::Info);
-    assert_eq!(
-        Message::decode(&reply[..len]),
-        Ok(Message::Response { request_id: 9, response: Response::Ok(Reply::SetLogLevel) })
-    );
+fn set_log_level_sets_the_level_of_the_calling_connection() {
+    let mut rig = TestRig::new();
+    assert_eq!(rig.ok(Request::SetLogLevel { level: LogLevel::Info }), Reply::SetLogLevel);
+    assert_eq!(rig.connection.log_level.get(), LogLevel::Info);
 }
 
 #[test]
 fn a_log_level_above_debug_gets_malformed() {
-    let reply = handle(&mut FakeBoard::new(), &[0x07, 9, 0, 0, 0, 5]).unwrap();
+    let reply = handle(FakeBoard::new(), &[0x07, 9, 0, 0, 0, 5]).unwrap();
     assert_eq!(reply[..6], [0x87, 9, 0, 0, 0, ErrorCode::Malformed as u8]);
 }
 
@@ -97,12 +86,6 @@ fn request(request_id: u32, request: Request) -> Vec<u8> {
     out[..len].to_vec()
 }
 
-fn handle(board: &mut FakeBoard, request: &[u8]) -> Option<Vec<u8>> {
-    let mut reply = [0; MAX_PAYLOAD];
-    match Rig::new(board).handle(request, board, &mut reply) {
-        Handled::NoReply => None,
-        Handled::Reply { len, .. } | Handled::SetLogLevel { len, .. } => {
-            Some(reply[..len].to_vec())
-        }
-    }
+fn handle(board: FakeBoard, request: &[u8]) -> Option<Vec<u8>> {
+    TestRig::on(board).raw(request)
 }

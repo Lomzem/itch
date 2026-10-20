@@ -60,7 +60,9 @@ pub struct Chip {
     pub last_panic: &'static str,
     /// Milliseconds since boot.
     pub now: fn() -> u64,
-    /// The counters the transports keep.
+    /// Checks `rig` in with the supervisor at a time `now` gave.
+    pub check_in: fn(u64),
+    /// The counters the logger and the transport writers keep.
     pub counters: fn() -> Counters,
 }
 
@@ -106,13 +108,14 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
             channels: 0,
             faulted: false,
             blink: false,
-            settings: Settings::new(flash, chip.now),
+            settings: Settings::new(flash, chip.now, chip.check_in),
         }
     }
 
-    /// Runs on every idle tick: blinks the status LED, once per tick, while
-    /// the expander is faulted.
+    /// Runs on every idle tick: checks `rig` in with the supervisor and
+    /// blinks the status LED, once per tick, while the expander is faulted.
     pub fn tick(&mut self) {
+        (self.chip.check_in)(self.now());
         self.blink = !self.blink;
         self.show_status();
     }
@@ -271,7 +274,7 @@ mod esp32s3 {
     use super::{Chip, RevA};
     use crate::crash::{self, RECORD_LEN, Record};
     use crate::supervisor::{self, ResetLine};
-    use crate::{logger, queue, usb};
+    use crate::{logger, usb};
 
     /// The expander's RESET is GPIO6, pulled low on the board.
     const RESET_GPIO: u8 = 6;
@@ -353,6 +356,7 @@ mod esp32s3 {
             reset_reason,
             last_panic,
             now: || embassy_time::Instant::now().as_millis(),
+            check_in: supervisor::check_in,
             counters,
         };
         let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
@@ -395,8 +399,6 @@ mod esp32s3 {
     fn counters() -> Counters {
         let load = |counter: &AtomicU32| counter.load(Ordering::Relaxed);
         Counters {
-            crc_failures: load(&queue::CRC_FAILURES),
-            oversized_frames: load(&queue::OVERSIZED_FRAMES),
             dropped_logs: load(&logger::DROPPED_LOGS),
             usb_tx_dropped: load(&usb::TX_DROPPED),
         }

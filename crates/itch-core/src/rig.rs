@@ -1,37 +1,46 @@
 use crate::board::{Board, StorageFault};
-use crate::frame::MAX_PAYLOAD;
+use crate::frame::{FrameError, MAX_PAYLOAD};
 use crate::label::Label;
 use crate::lease::{self, Lease};
 use crate::wire::{
-    CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, LogLevel, Message, PROTOCOL, Reply, Request,
-    RequestType, Response, StatusReply,
+    CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, LogLevel, PROTOCOL, Reply, Request,
+    StatusReply, decode_request,
 };
 
 /// How long the transport waits after a Channel write before replying, so
 /// the contacts have settled. An initial value, pending bench measurement.
 pub const SETTLE_MS: u64 = 20;
 
-/// What the transport does after [`Rig::handle`].
+/// What the transport does after [`Rig::receive`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Handled {
-    /// Send nothing: the payload had no readable `request_id`.
+    /// Send nothing: the frame was dropped, or its payload had no readable
+    /// `request_id`.
     NoReply,
     /// Send the first `len` bytes of the reply buffer, after waiting
     /// [`SETTLE_MS`] if `settle` is set.
     Reply { len: usize, settle: bool },
-    /// Set the calling connection's log level to `level`, then send the
-    /// first `len` bytes of the reply buffer.
-    SetLogLevel { len: usize, level: LogLevel },
+}
+
+/// The connection a frame came in on, as the Rig sees it.
+pub trait Connection {
+    /// Sends this connection the Log Events at `level` and below from now
+    /// on, and none of those queued before.
+    fn set_log_level(&self, level: LogLevel);
 }
 
 /// The Rig's protocol logic. It does no I/O: the transport feeds it decoded
-/// payloads and sends back what it writes.
+/// frames and sends back what it writes.
 pub struct Rig {
     lease: Lease,
     /// The label `Hello` reports.
     label: Label,
     /// The commanded Channel state, bit 0 = CH1.
     channels: u16,
+    /// Frames dropped for a bad CRC, truncated COBS or a wrong length.
+    crc_failures: u32,
+    /// Frames dropped for a payload over [`MAX_PAYLOAD`].
+    oversized_frames: u32,
     /// Payloads dropped for being under 5 bytes.
     malformed_frames: u32,
     /// Times the expander was found faulty and re-initialised.
@@ -52,33 +61,43 @@ impl Rig {
             lease: Lease::default(),
             label,
             channels: 0,
+            crc_failures: 0,
+            oversized_frames: 0,
             malformed_frames: 0,
             expander_faults: 0,
             held_in_reset: false,
         }
     }
 
-    /// Answers one request payload, writing the reply payload into `reply`.
-    pub fn handle<B: Board>(
+    /// Answers one frame that came in on `connection`, writing the reply
+    /// payload into `reply`. A frame the decoder dropped is counted.
+    pub fn receive<B: Board>(
         &mut self,
-        request: &[u8],
+        frame: Result<&[u8], FrameError>,
         board: &mut B,
+        connection: &impl Connection,
         reply: &mut [u8; MAX_PAYLOAD],
     ) -> Handled {
-        let Some((&request_type, rest)) = request.split_first() else {
-            return self.drop_malformed();
+        let request = match frame {
+            Ok(request) => request,
+            Err(FrameError::Corrupt) => {
+                log::warn!("dropped a corrupt frame");
+                self.crc_failures = self.crc_failures.wrapping_add(1);
+                return Handled::NoReply;
+            }
+            Err(FrameError::Oversized) => {
+                log::warn!("dropped a frame over {MAX_PAYLOAD} bytes");
+                self.oversized_frames = self.oversized_frames.wrapping_add(1);
+                return Handled::NoReply;
+            }
         };
-        let Some((request_id, body)) = rest.split_first_chunk() else {
-            return self.drop_malformed();
+        let Some((header, decoded)) = decode_request(request) else {
+            self.malformed_frames = self.malformed_frames.wrapping_add(1);
+            return Handled::NoReply;
         };
-        let request_id = u32::from_le_bytes(*request_id);
-        let decoded = RequestType::from_u8(request_type)
-            .ok_or(DecodeError::UnknownType)
-            .and_then(|kind| Request::decode(kind, body));
-        let log_level = match decoded {
-            Ok(Request::SetLogLevel { level }) => Some(level),
-            _ => None,
-        };
+        if let Ok(Request::SetLogLevel { level }) = decoded {
+            connection.set_log_level(level);
+        }
         let result = match decoded {
             Ok(request) => self.apply(request, board),
             Err(error) => {
@@ -87,21 +106,19 @@ impl Rig {
                     DecodeError::UnknownType => ErrorCode::UnknownRequest,
                 };
                 log::warn!(
-                    "answered request {request_id} (type {request_type:#04x}) with {error:?}"
+                    "answered request {} (type {:#04x}) with {error:?}",
+                    header.request_id,
+                    header.request_type
                 );
                 Err(error)
             }
         };
         let settle = matches!(result, Ok(Reply::WriteChannels { .. } | Reply::Clear { .. }));
         let response = match result {
-            Ok(reply) => Response::Ok(reply),
-            Err(error) => Response::Err { request_type, error, detail: self.detail(error) },
+            Ok(reply) => header.reply(reply),
+            Err(error) => header.error(error, self.detail(error)),
         };
-        let len = Message::Response { request_id, response }.encode(reply);
-        match log_level {
-            Some(level) => Handled::SetLogLevel { len, level },
-            None => Handled::Reply { len, settle },
-        }
+        Handled::Reply { len: response.encode(reply), settle }
     }
 
     /// The idle tick, every ~50 ms. Re-initialises the expander if it no
@@ -124,11 +141,6 @@ impl Rig {
         }
     }
 
-    fn drop_malformed(&mut self) -> Handled {
-        self.malformed_frames = self.malformed_frames.wrapping_add(1);
-        Handled::NoReply
-    }
-
     fn apply<B: Board>(&mut self, request: Request, board: &mut B) -> Result<Reply<'_>, ErrorCode> {
         let now = board.now();
         self.lease.expire(now);
@@ -146,7 +158,7 @@ impl Rig {
                     label: self.label.as_str(),
                 })
             }
-            // The transport applies the level; see `Handled::SetLogLevel`.
+            // Applied to the connection in `receive`.
             Request::SetLogLevel { .. } => Reply::SetLogLevel,
             Request::GetChannels => {
                 Reply::GetChannels { state: if self.held_in_reset { 0 } else { self.channels } }
@@ -159,8 +171,8 @@ impl Rig {
                     reset_reason: info.reset_reason,
                     last_panic: info.last_panic,
                     holder: self.lease.holder(),
-                    crc_failures: counters.crc_failures,
-                    oversized_frames: counters.oversized_frames,
+                    crc_failures: self.crc_failures,
+                    oversized_frames: self.oversized_frames,
                     malformed_frames: self.malformed_frames,
                     dropped_logs: counters.dropped_logs,
                     expander_faults: self.expander_faults,

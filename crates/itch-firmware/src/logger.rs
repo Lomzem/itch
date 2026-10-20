@@ -1,10 +1,11 @@
-//! Routes `log` facade records to each transport's Log Event queue. There
+//! Routes `log` facade records to each transport's mailbox. There
 //! is no other log output: anything else on USB would corrupt the protocol.
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use log::{LevelFilter, Log, Metadata, Record};
 
+use crate::mailbox::Mailbox;
 #[cfg(feature = "wifi")]
 use crate::tcp;
 use crate::usb;
@@ -30,20 +31,14 @@ impl Log for Logger {
     }
 
     fn log(&self, record: &Record) {
-        let full = usb::LOGS.lock(|logs| logs.borrow_mut().push(record.level(), *record.args()));
-        if full.is_err() {
-            DROPPED_LOGS.fetch_add(1, Ordering::Relaxed);
-        }
-        usb::LOGGED.signal(());
-        #[cfg(feature = "wifi")]
-        {
-            let full =
-                tcp::LOGS.lock(|logs| logs.borrow_mut().push(record.level(), *record.args()));
-            if full.is_err() {
+        let log = |mailbox: &Mailbox| {
+            if mailbox.log(record.level(), *record.args()).is_err() {
                 DROPPED_LOGS.fetch_add(1, Ordering::Relaxed);
             }
-            tcp::LOGGED.signal(());
-        }
+        };
+        log(&usb::MAILBOX);
+        #[cfg(feature = "wifi")]
+        log(&tcp::MAILBOX);
     }
 
     fn flush(&self) {}

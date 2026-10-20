@@ -6,15 +6,14 @@ mod sim_board;
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::ExitCode;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use itch_core::frame::{FrameDecoder, FrameError, MAX_FRAME, MAX_PAYLOAD, encode_frame};
+use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::{Handled, Rig, SETTLE_MS};
 use logs::ConnectionLogs;
-use sim_board::{CRC_FAILURES, OVERSIZED_FRAMES, SimBoard};
+use sim_board::SimBoard;
 
 const USAGE: &str = "usage: itch-sim [--bind ADDR] [--clock-rate N] [--hardware-fault]
                 [--storage-fault]
@@ -113,7 +112,7 @@ fn serve(stream: TcpStream, sim: &Mutex<Sim>) {
     };
     thread::scope(|scope| {
         scope.spawn(|| send_logs(&logs, &writer));
-        if let Err(err) = answer(&stream, &peer, sim, &logs, &writer) {
+        if let Err(err) = answer(&stream, sim, &logs, &writer) {
             log::warn!("{peer}: {err}");
         }
         logs.close();
@@ -124,7 +123,6 @@ fn serve(stream: TcpStream, sim: &Mutex<Sim>) {
 /// Answers the connection's requests until it closes.
 fn answer(
     mut stream: &TcpStream,
-    peer: &str,
     sim: &Mutex<Sim>,
     logs: &ConnectionLogs,
     writer: &Mutex<TcpStream>,
@@ -138,38 +136,20 @@ fn answer(
             return Ok(());
         }
         for &byte in &input[..read] {
-            let request = match decoder.push(byte) {
-                None => continue,
-                Some(Ok(request)) => request,
-                Some(Err(FrameError::Corrupt)) => {
-                    log::warn!("{peer}: dropped a corrupt frame");
-                    CRC_FAILURES.fetch_add(1, Ordering::Relaxed);
-                    continue;
-                }
-                Some(Err(FrameError::Oversized)) => {
-                    log::warn!("{peer}: dropped a frame over {MAX_PAYLOAD} bytes");
-                    OVERSIZED_FRAMES.fetch_add(1, Ordering::Relaxed);
-                    continue;
-                }
+            let Some(frame) = decoder.push(byte) else {
+                continue;
             };
             let handled = {
                 let Sim { rig, board } = &mut *sim.lock().unwrap();
-                rig.handle(request, board, &mut reply)
+                rig.receive(frame, board, logs, &mut reply)
             };
-            let len = match handled {
-                Handled::NoReply => continue,
-                Handled::Reply { len, settle } => {
-                    if settle {
-                        // Outside the lock, so other connections aren't held up.
-                        thread::sleep(Duration::from_millis(SETTLE_MS));
-                    }
-                    len
-                }
-                Handled::SetLogLevel { len, level } => {
-                    logs.set_level(level);
-                    len
-                }
+            let Handled::Reply { len, settle } = handled else {
+                continue;
             };
+            if settle {
+                // Outside the lock, so other connections aren't held up.
+                thread::sleep(Duration::from_millis(SETTLE_MS));
+            }
             send(writer, &reply[..len])?;
         }
     }
