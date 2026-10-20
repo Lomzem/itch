@@ -74,6 +74,8 @@ Use a client adapted to [protocol 3](../protocol/README.md); older released clie
 - **Pass:** `bench3` survives the power cycle, the reflash and the merged image.
 - **If it fails:** check that the partition table in `crates/itch-firmware/partitions.csv` was flashed, and that the merged image was saved with `--skip-padding`; padding overwrites `settings`. The storage code is in `crates/itch-firmware/src/settings.rs` (`PARTITION`, `VERSION`).
 
+The Wi-Fi credentials and address configuration are saved with the label; item 28 checks they survive the same reflashes.
+
 ## 6. USB open/close leaves the Rig alone
 
 Setup: turn CH1 and CH16 on and every other Channel off, and put the meter or logic analyser on all 16 contacts. This is the test pattern.
@@ -166,7 +168,7 @@ Each case needs a throwaway build from a scratch branch; don't commit it. Make t
 
 ## Wi-Fi
 
-Items 16–27 need the access point from [Tools](#tools). Keep a USB connection open throughout, with its log level at debug, to read the Rig's Wi-Fi log lines (`joined …`, `couldn't join …`, `lost …`, `serving tcp://…`, `advertising …`, `heap: …`). `GetStatus` gives `link` (off, joining or connected) and `current_address`, and the configured `mode`, `address`, `prefix` and `gateway`.
+Items 16–28 need the access point from [Tools](#tools). Keep a USB connection open throughout, with its log level at debug, to read the Rig's Wi-Fi log lines (`joined …`, `couldn't join …`, `lost …`, `serving tcp://…`, `advertising …`, `heap: …`). `GetStatus` gives `link` (off, joining or connected) and `current_address`, and the configured `mode`, `address`, `prefix` and `gateway`.
 
 ## 16. Joining the network **[per-Rig]**
 
@@ -228,7 +230,7 @@ The examples use `192.0.2.10/24` with gateway `192.0.2.1`: use a free address on
   - About 1 s after each reply, `GetStatus` shows mode static with the address, prefix and gateway as sent, and `current_address` is that address. `link` stays connected throughout: the Rig doesn't leave the network, and the access point lists it all along.
   - `Hello` and ping answer at each new address.
   - After the power cycle the Rig joins again at `192.0.2.11` by itself. Before it has joined, `GetStatus` shows mode static with `current_address` zero.
-- **If it fails:** the board hands the configuration to the network stack only after the reply is queued (`apply_settings` in `crates/itch-firmware/src/board.rs`), and the `readdress` task in `crates/itch-firmware/src/radio.rs` applies it `LEAVE_DELAY` later. A `current_address` that keeps the old address after a static-to-static change means `readdress` didn't report the new one to `WIFI`. A configuration that doesn't survive the power cycle is a settings matter (item 5).
+- **If it fails:** the board hands the configuration to the network stack only after the reply is queued (`apply_settings` in `crates/itch-firmware/src/board.rs`), and the `address` task in `crates/itch-firmware/src/radio.rs` applies it `LEAVE_DELAY` later. A `current_address` that keeps the old address after a static-to-static change means `address` didn't report the new one to `WIFI`: it looks every `ADDRESS_POLL`. A configuration that doesn't survive the power cycle is a settings matter (item 5).
 
 ## 23. Back to DHCP
 
@@ -258,6 +260,12 @@ Setup: the test pattern from item 6 (CH1 and CH16 on), with the meter or logic a
 
 ## 27. Re-advertising after a rejoin
 
-- **Method:** keep `avahi-browse -r _itch._tcp` running. Reboot the access point. Then move the Rig to `ExampleRigNet2` and back, as in item 18, and finally power-cycle it.
-- **Pass:** each time the Rig is connected again, the browser lists it within a few seconds of `link` showing connected, at its new `current_address`, with nothing queried by hand. While it is away, its instance drops out within about 2 minutes. After the power cycle it is advertised under its saved label.
-- **If it fails:** the responder only runs while `Wifi::network` reports connected, and the address it advertises comes from the `address` and `readdress` tasks in `crates/itch-firmware/src/radio.rs`.
+- **Method:** keep `avahi-browse -r _itch._tcp` running. Reboot the access point. Then move the Rig to `ExampleRigNet2` and back, as in item 18, and finally power-cycle it. On a Rig using DHCP, also reserve a different address for its Hardware ID on the access point, with a short lease time, and wait for the lease to renew without the Rig leaving.
+- **Pass:** each time the Rig is connected again, the browser lists it within a few seconds of `link` showing connected, at its new `current_address`, with nothing queried by hand. While it is away, its instance drops out within about 2 minutes. After the power cycle it is advertised under its saved label. Within a few seconds of the renewal, `current_address` is the reserved address, the USB log says `serving tcp://…` at it, and the browser lists the Rig there.
+- **If it fails:** the responder only runs while `Wifi::network` reports connected, and the address it advertises comes from the `address` task in `crates/itch-firmware/src/radio.rs`. A renewal at a new address reaches it only by polling, every `ADDRESS_POLL`.
+
+## 28. Wi-Fi settings survive a reflash
+
+- **Method:** over USB, give the Rig credentials for `ExampleRigNet` with `SetWifi`, and the static address `192.0.2.10/24` with gateway `192.0.2.1` with `SetAddress`, as in item 22. Reflash with `cargo +esp flash-firmware` and read `GetStatus` over USB. Then flash a merged image saved with `--skip-padding` (README) and read it again. Afterwards, `SetAddress` with mode DHCP restores DHCP.
+- **Pass:** after each reflash, `wifi_configured` is true, `ssid` is `ExampleRigNet`, and `mode`, `address`, `prefix` and `gateway` are as sent. The Rig joins `ExampleRigNet` again by itself at `192.0.2.10`, with no passphrase re-sent.
+- **If it fails:** as item 5: the credentials and address configuration live in the same settings record as the label.
