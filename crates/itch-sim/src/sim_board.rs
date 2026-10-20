@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use itch_core::board::{Board, BoardInfo, Counters, HwFault, Network, StorageFault};
 use itch_core::label::Label;
-use itch_core::wifi::Credentials;
+use itch_core::wifi::{Addressing, Credentials};
 use itch_core::wire::Link;
 
 use crate::logs::DROPPED_LOGS;
@@ -21,10 +21,12 @@ pub struct SimBoard {
     label: Option<Label>,
     /// The saved Wi-Fi credentials, for this run only.
     wifi: Option<Credentials>,
+    /// The saved address configuration, for this run only.
+    addressing: Addressing,
     /// Makes every save fail.
     storage_fault: bool,
-    /// The IPv4 address the sim is bound to, reported as the Rig's address
-    /// while it has credentials. Zero if it isn't bound to one.
+    /// The IPv4 address the sim is bound to, reported as the Rig's DHCP
+    /// address while it has credentials. Zero if it isn't bound to one.
     address: [u8; 4],
 }
 
@@ -47,6 +49,7 @@ impl SimBoard {
             hardware_fault,
             label: None,
             wifi: None,
+            addressing: Addressing::Dhcp,
             storage_fault,
             address: match bound.ip() {
                 IpAddr::V4(address) => address.octets(),
@@ -119,11 +122,27 @@ impl Board for SimBoard {
         Ok(())
     }
 
-    /// With credentials the sim is "connected" at the address it is bound
-    /// to; it joins no real network.
+    fn load_addressing(&mut self) -> Addressing {
+        self.addressing
+    }
+
+    fn save_addressing(&mut self, addressing: &Addressing) -> Result<(), StorageFault> {
+        if self.storage_fault {
+            return Err(StorageFault);
+        }
+        self.addressing = *addressing;
+        Ok(())
+    }
+
+    /// With credentials the sim is "connected" at its static address, or
+    /// with DHCP at the address it is bound to; it joins no real network.
     fn network(&self) -> Network {
+        let address = match self.addressing {
+            Addressing::Dhcp => self.address,
+            Addressing::Static(set) => set.address(),
+        };
         match self.wifi {
-            Some(_) => Network { link: Link::Connected, address: self.address },
+            Some(_) => Network { link: Link::Connected, address },
             None => Network::default(),
         }
     }

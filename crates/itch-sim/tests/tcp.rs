@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD, encode_frame};
 use itch_core::rig::SETTLE_MS;
 use itch_core::wire::{
-    ErrorCode, Event, HelloReply, Link, Lock, LogEvent, LogLevel, Message, Reply, Request,
-    Response, SetLabel, SetWifi, StatusReply, WriteChannels,
+    AddressMode, ErrorCode, Event, HelloReply, Link, Lock, LogEvent, LogLevel, Message, Reply,
+    Request, Response, SetAddress, SetLabel, SetWifi, StatusReply, WriteChannels,
 };
 
 #[test]
@@ -169,6 +169,10 @@ fn status_counts_bad_frames_from_every_connection() {
             ssid: "",
             link: Link::Off,
             current_address: [0; 4],
+            mode: AddressMode::Dhcp,
+            address: [0; 4],
+            prefix: 0,
+            gateway: [0; 4],
         }
     );
 }
@@ -304,6 +308,99 @@ fn wifi_credentials_are_refused_on_a_storage_fault_or_by_the_lock() {
         Response::Err { request_type: 0x0D, error: ErrorCode::Locked, detail: "alice" }
     );
     assert!(!network(&mut alice).0);
+}
+
+/// A made-up static address from the documentation range.
+const STATIC: [u8; 4] = [192, 0, 2, 10];
+const GATEWAY: [u8; 4] = [192, 0, 2, 1];
+
+fn set_address(
+    holder: &str,
+    mode: AddressMode,
+    address: [u8; 4],
+    prefix: u8,
+    gateway: [u8; 4],
+) -> Request<'_> {
+    Request::SetAddress(SetAddress { holder, mode, address, prefix, gateway })
+}
+
+fn set_static(holder: &str) -> Request<'_> {
+    set_address(holder, AddressMode::Static, STATIC, 24, GATEWAY)
+}
+
+fn set_dhcp() -> Request<'static> {
+    set_address("", AddressMode::Dhcp, [0; 4], 0, [0; 4])
+}
+
+/// An address configuration as `GetStatus` reports it: mode, address,
+/// prefix and gateway.
+type Addressing = (AddressMode, [u8; 4], u8, [u8; 4]);
+
+/// What `GetStatus` reports of the address: the configuration, and the
+/// address the Rig has.
+fn addressing(stream: &mut TcpStream) -> (Addressing, [u8; 4]) {
+    match exchange(stream, 9, Request::GetStatus) {
+        Response::Ok(Reply::GetStatus(status)) => {
+            ((status.mode, status.address, status.prefix, status.gateway), status.current_address)
+        }
+        other => panic!("not a GetStatus reply: {other:?}"),
+    }
+}
+
+#[test]
+fn a_static_address_lasts_for_the_run_and_is_the_address_the_sim_reports() {
+    let sim = Sim::start();
+    let dhcp = (AddressMode::Dhcp, [0; 4], 0, [0; 4]);
+    let configured = (AddressMode::Static, STATIC, 24, GATEWAY);
+    assert_eq!(addressing(&mut sim.connect()), (dhcp, [0; 4]));
+
+    assert_eq!(exchange(&mut sim.connect(), 1, set_static("")), Response::Ok(Reply::SetAddress));
+    // Static but not connected: no credentials yet.
+    assert_eq!(addressing(&mut sim.connect()), (configured, [0; 4]));
+
+    exchange(&mut sim.connect(), 2, set_wifi("", SSID, "example-passphrase"));
+    assert_eq!(addressing(&mut sim.connect()), (configured, STATIC));
+
+    assert_eq!(exchange(&mut sim.connect(), 3, set_dhcp()), Response::Ok(Reply::SetAddress));
+    assert_eq!(addressing(&mut sim.connect()), (dhcp, [127, 0, 0, 1]));
+}
+
+#[test]
+fn an_address_out_of_range_is_malformed() {
+    let sim = Sim::start();
+    let mut stream = sim.connect();
+    for request in [
+        set_address("", AddressMode::Static, STATIC, 33, GATEWAY),
+        set_address("", AddressMode::Static, [0; 4], 24, GATEWAY),
+        set_address("", AddressMode::Dhcp, STATIC, 0, [0; 4]),
+    ] {
+        let Response::Err { error, .. } = exchange(&mut stream, 1, request) else {
+            panic!("{request:?} was accepted");
+        };
+        assert_eq!(error, ErrorCode::Malformed);
+    }
+    assert_eq!(addressing(&mut stream).0.0, AddressMode::Dhcp);
+}
+
+#[test]
+fn an_address_is_refused_on_a_storage_fault_or_by_the_lock() {
+    let faulty = Sim::start_with(&["--storage-fault"]);
+    let mut stream = faulty.connect();
+    let Response::Err { error, .. } = exchange(&mut stream, 1, set_static("")) else {
+        panic!("the address was saved");
+    };
+    assert_eq!(error, ErrorCode::StorageFault);
+    assert_eq!(addressing(&mut stream).0.0, AddressMode::Dhcp);
+
+    let sim = Sim::start();
+    let mut alice = sim.connect();
+    let lock = Request::Lock(Lock { holder: "alice", takeover: false });
+    assert_eq!(exchange(&mut alice, 1, lock), Response::Ok(Reply::Lock));
+    assert_eq!(
+        exchange(&mut sim.connect(), 1, set_static("bob")),
+        Response::Err { request_type: 0x0E, error: ErrorCode::Locked, detail: "alice" }
+    );
+    assert_eq!(addressing(&mut alice).0.0, AddressMode::Dhcp);
 }
 
 struct Sim {

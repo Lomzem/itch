@@ -7,7 +7,7 @@ use embedded_hal::i2c::I2c;
 use embedded_storage::nor_flash::NorFlash;
 use itch_core::board::{Board, BoardInfo, Counters, HwFault, Network, StorageFault};
 use itch_core::label::Label;
-use itch_core::wifi::Credentials;
+use itch_core::wifi::{Addressing, Credentials};
 
 use crate::settings::{Settings, Snapshot};
 use crate::wifi::Wifi;
@@ -84,6 +84,9 @@ pub struct RevA<I2C, RESET, LED, DELAY, FLASH: NorFlash> {
     settings: Settings<FLASH>,
     /// New credentials were saved but not yet handed to the radio.
     rejoin: bool,
+    /// A new address configuration was saved but not yet handed to the
+    /// network stack.
+    readdress: bool,
 }
 
 impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash>
@@ -111,15 +114,21 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
             blink: false,
             settings: Settings::new(flash, chip.now, chip.check_in),
             rejoin: false,
+            readdress: false,
         }
     }
 
-    /// Hands the radio credentials saved since the last call. The Rig task
-    /// calls it once the reply to the change is on its way, so a client on
-    /// Wi-Fi learns the change was saved before the Rig leaves the network.
+    /// Hands the radio credentials, and the network stack an address
+    /// configuration, saved since the last call. The Rig task calls it once
+    /// the reply to the change is on its way, so a client on Wi-Fi learns
+    /// the change was saved before the Rig leaves the network or its
+    /// address.
     pub fn apply_settings(&mut self) {
         if core::mem::take(&mut self.rejoin) {
             self.chip.wifi.join(self.settings.saved().wifi);
+        }
+        if core::mem::take(&mut self.readdress) {
+            self.chip.wifi.readdress(self.settings.saved().addressing);
         }
     }
 
@@ -247,6 +256,18 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
     fn save_wifi(&mut self, wifi: Option<&Credentials>) -> Result<(), StorageFault> {
         self.settings.save(Snapshot { wifi: wifi.copied(), ..*self.settings.saved() })?;
         self.rejoin = true;
+        Ok(())
+    }
+
+    fn load_addressing(&mut self) -> Addressing {
+        self.settings.saved().addressing
+    }
+
+    /// The network stack takes it once
+    /// [`apply_settings`](Self::apply_settings) hands it over.
+    fn save_addressing(&mut self, addressing: &Addressing) -> Result<(), StorageFault> {
+        self.settings.save(Snapshot { addressing: *addressing, ..*self.settings.saved() })?;
+        self.readdress = true;
         Ok(())
     }
 

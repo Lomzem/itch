@@ -1,5 +1,5 @@
 use super::codec::{Reader, Writer};
-use super::{DecodeError, Link, MAX_HOLDER, MAX_LAST_PANIC, MAX_SSID};
+use super::{AddressMode, DecodeError, Link, MAX_HOLDER, MAX_LAST_PANIC, MAX_SSID};
 
 /// The `GetStatus` result. Counters count since boot and wrap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,6 +25,13 @@ pub struct StatusReply<'a> {
     pub link: Link,
     /// The Rig's IPv4 address on the network. Zero when not connected.
     pub current_address: [u8; 4],
+    /// How the Rig is configured to take its address, whether or not it
+    /// has one. The static `address`, `prefix` and `gateway` are zero for
+    /// DHCP; a zero `gateway` means none.
+    pub mode: AddressMode,
+    pub address: [u8; 4],
+    pub prefix: u8,
+    pub gateway: [u8; 4],
 }
 
 impl<'a> StatusReply<'a> {
@@ -43,6 +50,10 @@ impl<'a> StatusReply<'a> {
         w.text(self.ssid);
         w.u8(self.link as u8);
         w.bytes(&self.current_address);
+        w.u8(self.mode as u8);
+        w.bytes(&self.address);
+        w.u8(self.prefix);
+        w.bytes(&self.gateway);
     }
 
     pub(crate) fn decode(r: &mut Reader<'a>) -> Result<Self, DecodeError> {
@@ -61,6 +72,10 @@ impl<'a> StatusReply<'a> {
             ssid: r.text(MAX_SSID)?,
             link: Link::decode(r)?,
             current_address: r.array()?,
+            mode: AddressMode::decode(r)?,
+            address: r.array()?,
+            prefix: r.u8()?,
+            gateway: r.array()?,
         })
     }
 }

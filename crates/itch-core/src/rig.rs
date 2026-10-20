@@ -2,7 +2,7 @@ use crate::board::{Board, StorageFault};
 use crate::frame::{FrameError, MAX_PAYLOAD};
 use crate::holder::Holder;
 use crate::label::Label;
-use crate::wifi::Credentials;
+use crate::wifi::{Addressing, Credentials};
 use crate::wire::{
     CHANNEL_COUNT, DecodeError, ErrorCode, HelloReply, Lock, LogLevel, PROTOCOL, Reply, Request,
     StatusReply, decode_request,
@@ -37,6 +37,8 @@ pub struct Rig {
     label: Label,
     /// The Wi-Fi credentials saved. `None` = none.
     wifi: Option<Credentials>,
+    /// How the Rig is set to take its IPv4 address.
+    addressing: Addressing,
     /// Who holds the Lock. `None` = unlocked. Never persisted, so a reset
     /// unlocks the Rig.
     holder: Option<Holder>,
@@ -63,9 +65,11 @@ impl Rig {
             .filter(|label| !label.as_str().is_empty())
             .unwrap_or_else(|| Label::default_for(board.info().hardware_id));
         let wifi = board.load_wifi();
+        let addressing = board.load_addressing();
         Self {
             label,
             wifi,
+            addressing,
             holder: None,
             channels: 0,
             crc_failures: 0,
@@ -179,6 +183,10 @@ impl Rig {
                     ssid: self.wifi.as_ref().map_or("", Credentials::ssid),
                     link: network.link,
                     current_address: network.address,
+                    mode: self.addressing.mode(),
+                    address: self.addressing.address(),
+                    prefix: self.addressing.prefix(),
+                    gateway: self.addressing.gateway(),
                 })
             }
             Request::WriteChannels(write) => {
@@ -199,6 +207,12 @@ impl Rig {
                 self.check_lock(set.holder)?;
                 self.set_wifi(board, set.credentials())?;
                 Reply::SetWifi
+            }
+            Request::SetAddress(set) => {
+                self.check_lock(set.holder)?;
+                let addressing = set.addressing().ok_or(ErrorCode::Malformed)?;
+                self.set_addressing(board, addressing)?;
+                Reply::SetAddress
             }
             Request::Lock(lock) => {
                 self.lock(lock)?;
@@ -275,6 +289,24 @@ impl Rig {
             None => log::info!("Wi-Fi credentials cleared"),
         }
         self.wifi = wifi;
+        Ok(())
+    }
+
+    /// Saves `addressing` and reports it from now on.
+    fn set_addressing<B: Board>(
+        &mut self,
+        board: &mut B,
+        addressing: Addressing,
+    ) -> Result<(), ErrorCode> {
+        board.save_addressing(&addressing).map_err(|StorageFault| ErrorCode::StorageFault)?;
+        match &addressing {
+            Addressing::Dhcp => log::info!("address set to DHCP"),
+            Addressing::Static(set) => {
+                let [a, b, c, d] = set.address();
+                log::info!("address set to {a}.{b}.{c}.{d}/{}", set.prefix());
+            }
+        }
+        self.addressing = addressing;
         Ok(())
     }
 

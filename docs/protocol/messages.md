@@ -14,6 +14,7 @@ Each message lists its request body and its ok result body. The header (`type`, 
 | `0x0B` | [`Lock`](#lock) |
 | `0x0C` | [`ReleaseLock`](#releaselock) |
 | `0x0D` | [`SetWifi`](#setwifi) |
+| `0x0E` | [`SetAddress`](#setaddress) |
 
 | Type | Event |
 | --- | --- |
@@ -171,7 +172,7 @@ Reply:
 
 ## GetStatus
 
-`0x05`. Reports the Rig's health since boot, who holds its Lock and its Wi-Fi network. It never reports the Wi-Fi passphrase.
+`0x05`. Reports the Rig's health since boot, who holds its Lock, its Wi-Fi network and its address. It never reports the Wi-Fi passphrase.
 
 Request body: empty.
 
@@ -193,6 +194,10 @@ Result body:
 | `ssid` | `text` | The network the credentials are for. At most 32 bytes. Empty = no credentials |
 | `link` | `u8` | The Wi-Fi link: 0 off (no credentials, or the radio is off), 1 joining, 2 connected. Anything higher is `Malformed` |
 | `current_address` | `[u8; 4]` | The Rig's IPv4 address on the network, in network order (`c0 00 02 0a` is `192.0.2.10`). Zero when not connected |
+| `mode` | `u8` | How the Rig is set to take its address, whether or not it is connected: 0 DHCP, 1 static. Anything higher is `Malformed` |
+| `address` | `[u8; 4]` | The static address. Zero for DHCP |
+| `prefix` | `u8` | The static prefix length. Zero for DHCP |
+| `gateway` | `[u8; 4]` | The static gateway. Zero for DHCP or no gateway |
 
 The counters are described in [`errors.md`](errors.md#counters). Each counts since boot and wraps at 2^32.
 
@@ -202,7 +207,7 @@ Request:
 05 78 56 34 12
 ```
 
-Reply from a Rig up for 1 h 2 min 3 s after a software reset, whose previous boot panicked at `src/main.rs:88:5`, with counters 1 to 6 in order, Locked by `alice@ws3`, connected to the network `ExampleRigNet` at `192.0.2.10`:
+Reply from a Rig up for 1 h 2 min 3 s after a software reset, whose previous boot panicked at `src/main.rs:88:5`, with counters 1 to 6 in order, Locked by `alice@ws3`, connected to the network `ExampleRigNet` at its static address `192.0.2.10/24` with gateway `192.0.2.1`:
 
 ```hex
 85 78 56 34 12 00
@@ -220,6 +225,10 @@ f8 ce 38 00 00 00 00 00
 0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74
 02
 c0 00 02 0a
+01
+c0 00 02 0a
+18
+c0 00 02 01
 ```
 
 ## SetLabel
@@ -409,6 +418,59 @@ Refused with `StorageFault`:
 
 ```hex
 8d 78 56 34 12 09
+00
+```
+
+## SetAddress
+
+`0x0E`. Sets how the Rig takes its IPv4 address on the network: by DHCP, the default, or a static address, prefix length and optional gateway. It leaves the Wi-Fi credentials alone, so re-addressing a Rig never needs the passphrase. The Rig saves the configuration before it replies, so the reply means it survives a reboot; it keeps its label and every other setting. A failed save gets `StorageFault` and keeps the old configuration. The Rig then applies it, straight away if it is connected and otherwise when it next joins, so a change made over Wi-Fi may drop that connection after the reply. The Rig uses exactly the address given: it checks for no conflict and never falls back to DHCP. It has no DNS servers, since it never resolves names or opens connections. A mis-addressed Rig is fixed over USB (see [Transports](README.md#transports)). On a Rig Locked by someone else it is refused with `Locked` (see [Locks](README.md#locks)).
+
+Request body:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `holder` | `text` | At most 64 bytes. Empty = no Holder. See [Locks](README.md#locks) |
+| `mode` | `u8` | 0 DHCP, 1 static. Anything higher is `Malformed` |
+| `address` | `[u8; 4]` | Static: any non-zero address. DHCP: zero |
+| `prefix` | `u8` | Static: 1 to 32. DHCP: zero |
+| `gateway` | `[u8; 4]` | Static: zero = no gateway. DHCP: zero |
+
+Anything else, such as DHCP with a non-zero field, is `Malformed`. `GetStatus` reports the configuration as `mode`, `address`, `prefix` and `gateway`, beside the `current_address` the Rig has.
+
+Result body: empty.
+
+Request from Holder `alice@ws3` for the static address `192.0.2.10/24` with gateway `192.0.2.1`:
+
+```hex
+0e 78 56 34 12
+09 61 6c 69 63 65 40 77 73 33
+01
+c0 00 02 0a
+18
+c0 00 02 01
+```
+
+Request with no Holder to go back to DHCP:
+
+```hex
+0e 78 56 34 12
+00
+00
+00 00 00 00
+00
+00 00 00 00
+```
+
+Reply:
+
+```hex
+8e 78 56 34 12 00
+```
+
+Refused with `StorageFault`:
+
+```hex
+8e 78 56 34 12 09
 00
 ```
 

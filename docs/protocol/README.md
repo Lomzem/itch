@@ -19,6 +19,8 @@ The Rig speaks one framed byte stream, the same over every transport. Its two Tr
 
 A Rig without Wi-Fi credentials keeps its radio off and works over USB alone. To put it on a network, send [`SetWifi`](messages.md#setwifi) over either Transport: the Rig joins as a WPA2-Personal station, takes an address by DHCP, and joins again every few seconds after any failure or drop, keeping its Channels as they are throughout. `GetStatus` reports the `link` and the Rig's `current_address`; connect to `tcp://<current_address>:7878`, e.g. `tcp://192.0.2.10:7878`. A Rig that won't join can always be inspected and fixed over USB.
 
+To give the Rig a static address instead, such as `192.0.2.10/24` with gateway `192.0.2.1`, send [`SetAddress`](messages.md#setaddress); send it again with DHCP to switch back. Neither needs the passphrase. The Rig uses exactly the address given, with no conflict check and no fallback to DHCP, so a wrong static address takes it off the network: fix it over USB with another `SetAddress`. `GetStatus` reports the configured `mode`, `address`, `prefix` and `gateway` beside `current_address`, which stays zero until the Rig is connected.
+
 The Rig can't see connection boundaries over USB, so `Hello` is optional on the wire. Clients should still send it first on every connection. It identifies the Rig without changing Channels, log filtering or other Rig state.
 
 ## Framing
@@ -128,7 +130,7 @@ A powered Rig retains its commanded Channel state when a script exits, crashes, 
 
 A client may Lock a Rig under a Holder name, such as `alice@ws3`, so that nobody else's script can change it (ADR 0009). While a Rig is Locked, only requests carrying its Holder may change it; anyone may still look at it.
 
-- Every changing request (`WriteChannels`, `Clear`, `SetLabel`, `SetWifi`) starts with a `holder` field. Empty means no Holder. The Rig keeps no Lock state per connection, so a client sends its Holder on every change.
+- Every changing request (`WriteChannels`, `Clear`, `SetLabel`, `SetWifi`, `SetAddress`) starts with a `holder` field. Empty means no Holder. The Rig keeps no Lock state per connection, so a client sends its Holder on every change.
 - A changing request on a Locked Rig whose `holder` isn't the Holder, including an empty one, is refused with `Locked` and changes nothing. Its `detail` names the Holder for people to read. A client that needs the Holder reads it from `GetStatus`, never from `detail`.
 - `Hello`, `GetChannels`, `GetStatus` and `SetLogLevel` carry no Holder and are never refused for a Lock.
 - [`Lock`](messages.md#lock) Locks an unlocked Rig. The same Holder may Lock again with no effect, which is how a script that crashed or lost its connection picks its Lock back up. Another Holder is refused with `Locked`, unless it sets `takeover`, which hands the Lock to it: a Takeover. The old Holder's next change is then refused with `Locked` naming the new Holder.
@@ -156,7 +158,7 @@ Conventions:
 
 - Hex strings (`payload`, `frame`, `stream`, `hardware_id`) are lowercase byte pairs separated by spaces. Readers should ignore whitespace and case.
 - Integer fields are JSON numbers. Consumers must preserve the full range of `u64` uptime values.
-- IPv4 addresses (`current_address`) are dotted-quad strings, such as `"192.0.2.10"`.
+- IPv4 addresses (`current_address`, `address`, `gateway`) are dotted-quad strings, such as `"192.0.2.10"`.
 
 Top level:
 

@@ -1,10 +1,14 @@
 use itch_core::label::Label;
-use itch_core::wifi::Credentials;
+use itch_core::wifi::{Addressing, Credentials, StaticAddress};
 use itch_firmware::settings::{Snapshot, decode, encode};
 
-/// The address configuration this firmware saves: DHCP, so mode, address,
-/// prefix and gateway are all zero.
+/// DHCP's address configuration: mode, address, prefix and gateway are all
+/// zero.
 const DHCP: [u8; 10] = [0; 10];
+
+/// `192.0.2.10/24` through `192.0.2.1`: mode 1, the address, the prefix,
+/// the gateway.
+const STATIC: [u8; 10] = [1, 192, 0, 2, 10, 24, 192, 0, 2, 1];
 
 /// A version 1 record: the version (u16 LE), the label's length, the label.
 const V1_BENCH_3: &[u8] = b"\x01\x00\x07bench-3";
@@ -13,7 +17,12 @@ fn snapshot(label: &str, wifi: Option<(&str, &str)>) -> Snapshot {
     Snapshot {
         label: Label::new(label).unwrap(),
         wifi: wifi.map(|(ssid, passphrase)| Credentials::new(ssid, passphrase).unwrap()),
+        addressing: Addressing::Dhcp,
     }
+}
+
+fn static_address(address: [u8; 4], prefix: u8, gateway: [u8; 4]) -> Addressing {
+    Addressing::Static(StaticAddress::new(address, prefix, gateway).unwrap())
 }
 
 /// A version 2 record: the version (u16 LE), then the label, SSID and
@@ -44,11 +53,26 @@ fn settings_without_credentials_save_empty_ones() {
 }
 
 #[test]
+fn a_static_address_is_saved_after_the_credentials() {
+    let saved = Snapshot {
+        addressing: static_address([192, 0, 2, 10], 24, [192, 0, 2, 1]),
+        ..snapshot("bench-3", None)
+    };
+    let record = [&b"\x02\x00\x07bench-3\x00\x00"[..], &STATIC].concat();
+    assert_eq!(encode(&saved).as_bytes(), record);
+}
+
+#[test]
 fn a_version_2_record_gives_back_its_settings() {
     for saved in [
         snapshot("bench-3", Some(("ExampleRigNet", "example-passphrase"))),
         snapshot("", None),
         snapshot(&"é".repeat(32), Some((&"é".repeat(16), &"p".repeat(63)))),
+        Snapshot {
+            addressing: static_address([192, 0, 2, 10], 24, [192, 0, 2, 1]),
+            ..snapshot("bench-3", Some(("ExampleRigNet", "example-passphrase")))
+        },
+        Snapshot { addressing: static_address([192, 0, 2, 10], 32, [0; 4]), ..snapshot("", None) },
     ] {
         assert_eq!(decode(encode(&saved).as_bytes()), Some(saved));
     }
@@ -100,6 +124,11 @@ fn a_malformed_version_2_record_is_ignored() {
         v2(b"bench-3", ssid, b"1234567", &DHCP),
         v2(b"bench-3", ssid, b"", &DHCP),
         v2(b"bench-3", b"", passphrase, &DHCP),
+        // An address configuration no SetAddress could have given.
+        v2(b"bench-3", ssid, passphrase, &[2, 192, 0, 2, 10, 24, 192, 0, 2, 1]),
+        v2(b"bench-3", ssid, passphrase, &[0, 192, 0, 2, 10, 0, 0, 0, 0, 0]),
+        v2(b"bench-3", ssid, passphrase, &[1, 0, 0, 0, 0, 24, 0, 0, 0, 0]),
+        v2(b"bench-3", ssid, passphrase, &[1, 192, 0, 2, 10, 33, 0, 0, 0, 0]),
     ] {
         assert_eq!(decode(&record), None, "{record:02X?}");
     }

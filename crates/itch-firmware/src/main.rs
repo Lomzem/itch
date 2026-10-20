@@ -37,13 +37,14 @@ fn main() -> ! {
             log::error!("the expander didn't come up; holding it in reset");
         }
         let credentials = board.load_wifi();
+        let addressing = board.load_addressing();
         spawner.spawn(supervisor::supervisor(watchdog).unwrap());
         let usb = CONNECTIONS.connect(USB);
         spawner.spawn(rig(rig_logic, board).unwrap());
         spawner.spawn(usb::usb_rx(usb_rx, usb).unwrap());
         spawner.spawn(usb::usb_tx(usb_tx, usb).unwrap());
         // After USB, which keeps working whatever the radio does.
-        radio::start(spawner, radio, credentials);
+        radio::start(spawner, radio, credentials, addressing);
     })
 }
 

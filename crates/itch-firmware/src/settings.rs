@@ -10,8 +10,8 @@ use embassy_futures::block_on;
 use embedded_storage::nor_flash::{ErrorType, NorFlash, ReadNorFlash};
 use itch_core::board::StorageFault;
 use itch_core::label::Label;
-use itch_core::wifi::Credentials;
-use itch_core::wire::{MAX_LABEL, MAX_PASSPHRASE, MAX_SSID};
+use itch_core::wifi::{Addressing, Credentials};
+use itch_core::wire::{AddressMode, MAX_LABEL, MAX_PASSPHRASE, MAX_SSID};
 use sequential_storage::Error;
 use sequential_storage::cache::{Cache, Uncached};
 use sequential_storage::map::{MapConfig, MapStorage};
@@ -30,9 +30,9 @@ const VERSION_1: u16 = 1;
 /// the SSID and the passphrase, each as a `u8` length and its UTF-8 bytes,
 /// then the address configuration. Version 1 stopped after the label.
 const VERSION_LEN: usize = 2;
-/// The IPv4 address configuration: mode (`u8`, 0 = DHCP), address
-/// (`[u8; 4]`), prefix (`u8`) and gateway (`[u8; 4]`). This firmware only
-/// configures DHCP, so it saves all zero and reads any value as DHCP.
+/// The IPv4 address configuration, as `SetAddress` carries it: mode (`u8`,
+/// 0 = DHCP, 1 = static), address (`[u8; 4]`), prefix (`u8`) and gateway
+/// (`[u8; 4]`), all zero for DHCP.
 const ADDRESS_LEN: usize = 10;
 pub const MAX_RECORD: usize =
     VERSION_LEN + 1 + MAX_LABEL + 1 + MAX_SSID + 1 + MAX_PASSPHRASE + ADDRESS_LEN;
@@ -44,12 +44,18 @@ pub struct Snapshot {
     pub label: Label,
     /// `None` = no credentials.
     pub wifi: Option<Credentials>,
+    pub addressing: Addressing,
 }
 
 impl Default for Snapshot {
-    /// What a Rig with no record has: the default label and no credentials.
+    /// What a Rig with no record has: the default label, no credentials and
+    /// DHCP.
     fn default() -> Self {
-        Self { label: Label::new("").expect("empty fits"), wifi: None }
+        Self {
+            label: Label::new("").expect("empty fits"),
+            wifi: None,
+            addressing: Addressing::Dhcp,
+        }
     }
 }
 
@@ -83,30 +89,43 @@ pub fn encode(snapshot: &Snapshot) -> Record {
     record.push_text(snapshot.label.as_str());
     record.push_text(wifi.map_or("", Credentials::ssid));
     record.push_text(wifi.map_or("", Credentials::passphrase));
-    record.push(&[0; ADDRESS_LEN]);
+    let addressing = &snapshot.addressing;
+    record.push(&[addressing.mode() as u8]);
+    record.push(&addressing.address());
+    record.push(&[addressing.prefix()]);
+    record.push(&addressing.gateway());
     record
 }
 
 /// The settings `record` saves, or `None` unless it is a whole record of
-/// version 1 or 2. A version 1 record has no credentials.
+/// version 1 or 2. A version 1 record has no credentials and DHCP.
 pub fn decode(record: &[u8]) -> Option<Snapshot> {
     let (&version, mut rest) = record.split_first_chunk::<VERSION_LEN>()?;
     let label = Label::new(take_text(&mut rest, MAX_LABEL)?)?;
-    let wifi = match u16::from_le_bytes(version) {
-        VERSION_1 => None,
+    let (wifi, addressing) = match u16::from_le_bytes(version) {
+        VERSION_1 => (None, Addressing::Dhcp),
         VERSION => {
             let ssid = take_text(&mut rest, MAX_SSID)?;
             let passphrase = take_text(&mut rest, MAX_PASSPHRASE)?;
-            let (_address, tail) = rest.split_at_checked(ADDRESS_LEN)?;
-            rest = tail;
-            match Credentials::new(ssid, passphrase) {
+            let wifi = match Credentials::new(ssid, passphrase) {
                 None if !(ssid.is_empty() && passphrase.is_empty()) => return None,
                 wifi => wifi,
-            }
+            };
+            let (address, tail) = rest.split_first_chunk::<ADDRESS_LEN>()?;
+            rest = tail;
+            (wifi, take_addressing(address)?)
         }
         _ => return None,
     };
-    rest.is_empty().then_some(Snapshot { label, wifi })
+    rest.is_empty().then_some(Snapshot { label, wifi, addressing })
+}
+
+/// The address configuration in `bytes`, or `None` unless `SetAddress`
+/// could have given it.
+fn take_addressing(
+    &[mode, a, b, c, d, prefix, e, f, g, h]: &[u8; ADDRESS_LEN],
+) -> Option<Addressing> {
+    Addressing::new(AddressMode::from_u8(mode)?, [a, b, c, d], prefix, [e, f, g, h])
 }
 
 /// Takes a `u8` length and that many bytes of UTF-8, at most `max`, off
