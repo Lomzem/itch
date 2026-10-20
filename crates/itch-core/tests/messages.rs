@@ -3,7 +3,7 @@ mod common;
 use common::{cases, hex, vectors};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::wire::{
-    DecodeError, ErrorCode, Event, HelloReply, LogEvent, LogLevel, Message, PROTOCOL, Reply,
+    DecodeError, ErrorCode, Event, HelloReply, Lock, LogEvent, LogLevel, Message, PROTOCOL, Reply,
     Request, RequestType, Response, SetLabel, StatusReply, WriteChannels,
 };
 use serde_json::Value;
@@ -78,6 +78,8 @@ fn request_type(name: &str) -> RequestType {
         "GetStatus" => RequestType::GetStatus,
         "SetLabel" => RequestType::SetLabel,
         "SetLogLevel" => RequestType::SetLogLevel,
+        "Lock" => RequestType::Lock,
+        "ReleaseLock" => RequestType::ReleaseLock,
         _ => panic!("unknown request type {name}"),
     }
 }
@@ -87,15 +89,24 @@ fn request(request_type: RequestType, json: &Value) -> Request<'_> {
         RequestType::Hello => Request::Hello,
         RequestType::GetChannels => Request::GetChannels,
         RequestType::WriteChannels => Request::WriteChannels(WriteChannels {
+            holder: json["holder"].as_str().unwrap(),
             mask: int(&json["mask"]),
             values: int(&json["values"]),
         }),
-        RequestType::Clear => Request::Clear,
+        RequestType::Clear => Request::Clear { holder: json["holder"].as_str().unwrap() },
         RequestType::GetStatus => Request::GetStatus,
-        RequestType::SetLabel => {
-            Request::SetLabel(SetLabel { label: json["label"].as_str().unwrap() })
-        }
+        RequestType::SetLabel => Request::SetLabel(SetLabel {
+            holder: json["holder"].as_str().unwrap(),
+            label: json["label"].as_str().unwrap(),
+        }),
         RequestType::SetLogLevel => Request::SetLogLevel { level: log_level(&json["level"]) },
+        RequestType::Lock => Request::Lock(Lock {
+            holder: json["holder"].as_str().unwrap(),
+            takeover: json["takeover"].as_bool().unwrap(),
+        }),
+        RequestType::ReleaseLock => {
+            Request::ReleaseLock { holder: json["holder"].as_str().unwrap() }
+        }
     }
 }
 
@@ -123,9 +134,12 @@ fn reply(request_type: RequestType, json: &Value) -> Reply<'_> {
             dropped_logs: int(&json["dropped_logs"]),
             expander_faults: int(&json["expander_faults"]),
             usb_tx_dropped: int(&json["usb_tx_dropped"]),
+            holder: json["holder"].as_str().unwrap(),
         }),
         RequestType::SetLabel => Reply::SetLabel { label: json["label"].as_str().unwrap() },
         RequestType::SetLogLevel => Reply::SetLogLevel,
+        RequestType::Lock => Reply::Lock,
+        RequestType::ReleaseLock => Reply::ReleaseLock,
     }
 }
 
@@ -146,7 +160,7 @@ fn log_level(json: &Value) -> LogLevel {
 
 fn error_code(name: &str) -> ErrorCode {
     use ErrorCode::*;
-    [UnknownRequest, Malformed, Busy, HardwareFault, StorageFault, Internal]
+    [UnknownRequest, Malformed, Busy, HardwareFault, StorageFault, Internal, Locked]
         .into_iter()
         .find(|code| format!("{code:?}") == name)
         .unwrap_or_else(|| panic!("unknown error code {name}"))

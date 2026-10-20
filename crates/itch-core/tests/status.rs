@@ -3,7 +3,7 @@ mod common;
 use common::TestRig;
 use itch_core::board::Counters;
 use itch_core::frame::FrameError;
-use itch_core::wire::{Reply, Request, StatusReply};
+use itch_core::wire::{Lock, Reply, Request, StatusReply};
 
 fn status(rig: &mut TestRig) -> StatusReply<'static> {
     match rig.ok(Request::GetStatus) {
@@ -34,8 +34,21 @@ fn status_reports_uptime_reset_reason_last_panic_and_the_counters() {
             dropped_logs: 4,
             expander_faults: 0,
             usb_tx_dropped: 6,
+            holder: "",
         }
     );
+}
+
+#[test]
+fn status_reports_who_holds_the_lock() {
+    let mut rig = TestRig::new();
+    assert_eq!(status(&mut rig).holder, "");
+    rig.ok(Request::Lock(Lock { holder: "alice@ws3", takeover: false }));
+    assert_eq!(status(&mut rig).holder, "alice@ws3");
+    rig.ok(Request::Lock(Lock { holder: "bob@ws7", takeover: true }));
+    assert_eq!(status(&mut rig).holder, "bob@ws7");
+    rig.ok(Request::ReleaseLock { holder: "bob@ws7" });
+    assert_eq!(status(&mut rig).holder, "");
 }
 
 #[test]

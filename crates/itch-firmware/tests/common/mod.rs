@@ -441,7 +441,7 @@ impl Bench {
 
     /// Mask-writes the Channels through the Rig, bit 0 = CH1.
     pub fn write(&mut self, mask: u16, values: u16) {
-        let request = Request::WriteChannels(WriteChannels { mask, values });
+        let request = Request::WriteChannels(WriteChannels { holder: "", mask, values });
         let mut payload = [0; MAX_PAYLOAD];
         let len = Message::Request { request_id: 1, request }.encode(&mut payload);
         let mut reply = [0; MAX_PAYLOAD];
@@ -452,7 +452,7 @@ impl Bench {
     /// Renames the Rig through the Rig logic: `Ok` with the label it now
     /// reports, or the error code's name.
     pub fn set_label(&mut self, label: &str) -> Result<String, String> {
-        let request = Request::SetLabel(SetLabel { label });
+        let request = Request::SetLabel(SetLabel { holder: "", label });
         self.request(request, |reply| match reply {
             Reply::SetLabel { label } => label.to_owned(),
             reply => panic!("not a SetLabel reply: {reply:?}"),

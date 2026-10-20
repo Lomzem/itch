@@ -4,7 +4,7 @@ use common::TestRig;
 use itch_core::wire::{ErrorCode, Reply, Request, WriteChannels};
 
 fn write(mask: u16, values: u16) -> Request<'static> {
-    Request::WriteChannels(WriteChannels { mask, values })
+    Request::WriteChannels(WriteChannels { holder: "", mask, values })
 }
 
 #[test]
@@ -27,7 +27,7 @@ fn a_write_has_its_reply_wait_out_settling() {
 fn clear_turns_every_channel_off() {
     let mut rig = TestRig::new();
     rig.ok(write(0xFFFF, 0xA5A5));
-    assert_eq!(rig.ok(Request::Clear), Reply::Clear { state: 0 });
+    assert_eq!(rig.ok(Request::Clear { holder: "" }), Reply::Clear { state: 0 });
     assert!(rig.settle);
     assert_eq!(rig.board.writes.last(), Some(&0));
 }
