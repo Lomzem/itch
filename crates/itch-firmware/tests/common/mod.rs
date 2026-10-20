@@ -12,7 +12,7 @@ use embedded_storage::nor_flash::{
 };
 use itch_core::board::{Board, Counters};
 use itch_core::frame::MAX_PAYLOAD;
-use itch_core::rig::{Connection, Handled, Rig};
+use itch_core::rig::{Handled, LogControl, Rig};
 use itch_core::wire::{LogLevel, Message, Reply, Request, Response, SetLabel, WriteChannels};
 use itch_firmware::board::{Chip, RevA};
 use itch_firmware::settings::PARTITION;
@@ -366,13 +366,10 @@ impl NorFlash for FlashPort {
 
 pub type FakeRevA = RevA<Bus, ResetLine<'static, ResetPin>, Led, NoDelay, FlashPort>;
 
-const TOKEN: u64 = 0x0123_4567_89AB_CDEF;
-
-/// The connection the bench's requests come in on. Nothing here reads its
-/// Log Events.
+/// The bench's log selection. Nothing here reads its Log Events.
 struct Usb;
 
-impl Connection for Usb {
+impl LogControl for Usb {
     fn set_log_level(&self, _: LogLevel) {}
 }
 
@@ -444,7 +441,7 @@ impl Bench {
 
     /// Mask-writes the Channels through the Rig, bit 0 = CH1.
     pub fn write(&mut self, mask: u16, values: u16) {
-        let request = Request::WriteChannels(WriteChannels { token: TOKEN, mask, values });
+        let request = Request::WriteChannels(WriteChannels { mask, values });
         let mut payload = [0; MAX_PAYLOAD];
         let len = Message::Request { request_id: 1, request }.encode(&mut payload);
         let mut reply = [0; MAX_PAYLOAD];
@@ -455,7 +452,7 @@ impl Bench {
     /// Renames the Rig through the Rig logic: `Ok` with the label it now
     /// reports, or the error code's name.
     pub fn set_label(&mut self, label: &str) -> Result<String, String> {
-        let request = Request::SetLabel(SetLabel { token: TOKEN, label });
+        let request = Request::SetLabel(SetLabel { label });
         self.request(request, |reply| match reply {
             Reply::SetLabel { label } => label.to_owned(),
             reply => panic!("not a SetLabel reply: {reply:?}"),

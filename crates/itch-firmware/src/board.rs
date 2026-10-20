@@ -7,7 +7,6 @@ use embedded_hal::i2c::I2c;
 use embedded_storage::nor_flash::NorFlash;
 use itch_core::board::{Board, BoardInfo, Counters, HwFault, StorageFault};
 use itch_core::label::Label;
-use itch_core::wire::FEATURE_WIFI;
 
 use crate::settings::Settings;
 
@@ -18,9 +17,6 @@ const EXPANDER: u8 = 0x20;
 /// followed by its B register, so one write sets both ports.
 const IODIRA: u8 = 0x00;
 const OLATA: u8 = 0x14;
-
-/// What `Hello` reports in `features`: a `wifi` build is a development build.
-const FEATURES: u8 = if cfg!(feature = "wifi") { FEATURE_WIFI } else { 0 };
 
 #[derive(Clone, Copy)]
 enum Port {
@@ -93,7 +89,6 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
             hardware_id: chip.hardware_id,
             firmware_version: env!("CARGO_PKG_VERSION"),
             dirty: env!("ITCH_DIRTY") == "true",
-            features: FEATURES,
             board_revision: "A",
             reset_reason: chip.reset_reason,
             last_panic: chip.last_panic,
@@ -314,9 +309,6 @@ mod esp32s3 {
         /// USB Serial/JTAG, which keeps espflash's auto-reset on the same cable.
         pub usb_rx: UsbRx,
         pub usb_tx: UsbTx,
-        /// The radio, for the development-only WiFi transport.
-        #[cfg(feature = "wifi")]
-        pub wifi: esp_hal::peripherals::WIFI<'static>,
     }
 
     /// Boots the chip. The expander RESET is driven low before anything
@@ -363,14 +355,7 @@ mod esp32s3 {
         let reset = ResetLine::new(reset, &supervisor::TRIPPED);
         let flash = FlashStorage::new(p.FLASH);
         let board = RevA::new(i2c, reset, led, Delay::new(), flash, chip);
-        Parts {
-            board,
-            watchdog,
-            usb_rx,
-            usb_tx,
-            #[cfg(feature = "wifi")]
-            wifi: p.WIFI,
-        }
+        Parts { board, watchdog, usb_rx, usb_tx }
     }
 
     /// Takes the crash record the previous boot left, clearing it so it is

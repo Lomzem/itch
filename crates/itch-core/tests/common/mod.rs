@@ -10,25 +10,25 @@ use std::path::PathBuf;
 use std::cell::Cell;
 
 use itch_core::frame::{FrameError, MAX_PAYLOAD};
-use itch_core::rig::{Connection, Handled, Rig};
+use itch_core::rig::{Handled, LogControl, Rig};
 use itch_core::wire::{ErrorCode, LogLevel, Message, Reply, Request, Response};
 use serde_json::Value;
 
-/// A Rig on a `FakeBoard`, kept across requests, all on one connection.
+/// A Rig on a `FakeBoard`, kept across requests, with one log control.
 pub struct TestRig {
     pub rig: Rig,
     pub board: FakeBoard,
-    pub connection: TestConnection,
+    pub logs: TestLogControl,
     /// Whether the Rig had the last reply wait for the contacts to settle.
     pub settle: bool,
 }
 
-/// A connection that only remembers its log level.
-pub struct TestConnection {
+/// A log control that only remembers its log level.
+pub struct TestLogControl {
     pub log_level: Cell<LogLevel>,
 }
 
-impl Connection for TestConnection {
+impl LogControl for TestLogControl {
     fn set_log_level(&self, level: LogLevel) {
         self.log_level.set(level);
     }
@@ -41,8 +41,8 @@ impl TestRig {
 
     /// Boots a Rig on `board`.
     pub fn on(mut board: FakeBoard) -> Self {
-        let connection = TestConnection { log_level: Cell::new(LogLevel::Off) };
-        Self { rig: Rig::new(&mut board), board, connection, settle: false }
+        let logs = TestLogControl { log_level: Cell::new(LogLevel::Off) };
+        Self { rig: Rig::new(&mut board), board, logs, settle: false }
     }
 
     /// Runs one idle tick.
@@ -70,7 +70,7 @@ impl TestRig {
     /// returns the reply payload, if any.
     pub fn receive(&mut self, frame: Result<&[u8], FrameError>) -> Option<Vec<u8>> {
         let mut reply = [0; MAX_PAYLOAD];
-        match self.rig.receive(frame, &mut self.board, &self.connection, &mut reply) {
+        match self.rig.receive(frame, &mut self.board, &self.logs, &mut reply) {
             Handled::NoReply => None,
             Handled::Reply { len, settle } => {
                 self.settle = settle;
@@ -106,7 +106,7 @@ pub fn protocol_dir() -> PathBuf {
 }
 
 pub fn vectors() -> Value {
-    let text = std::fs::read_to_string(protocol_dir().join("vectors-v1.json")).unwrap();
+    let text = std::fs::read_to_string(protocol_dir().join("vectors-v2.json")).unwrap();
     serde_json::from_str(&text).unwrap()
 }
 

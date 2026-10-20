@@ -3,11 +3,8 @@ mod common;
 use common::{FakeBoard, TestRig};
 use itch_core::wire::{ErrorCode, Reply, Request, SetLabel};
 
-const TOKEN: u64 = 0x0123_4567_89AB_CDEF;
-const OTHER: u64 = 0xFEDC_BA98_7654_3210;
-
-fn set_label(token: u64, label: &str) -> Request<'_> {
-    Request::SetLabel(SetLabel { token, label })
+fn set_label(label: &str) -> Request<'_> {
+    Request::SetLabel(SetLabel { label })
 }
 
 fn hello_label(rig: &mut TestRig) -> String {
@@ -20,7 +17,7 @@ fn hello_label(rig: &mut TestRig) -> String {
 #[test]
 fn set_label_saves_the_label_and_hello_reports_it() {
     let mut rig = TestRig::new();
-    assert_eq!(rig.ok(set_label(TOKEN, "bench3")), Reply::SetLabel { label: "bench3" });
+    assert_eq!(rig.ok(set_label("bench3")), Reply::SetLabel { label: "bench3" });
     assert_eq!(hello_label(&mut rig), "bench3");
     assert_eq!(rig.board.saved, ["bench3"]);
 }
@@ -28,8 +25,8 @@ fn set_label_saves_the_label_and_hello_reports_it() {
 #[test]
 fn an_empty_label_restores_the_default_without_saving_it() {
     let mut rig = TestRig::new();
-    rig.ok(set_label(TOKEN, "bench3"));
-    assert_eq!(rig.ok(set_label(TOKEN, "")), Reply::SetLabel { label: "itch-C02718" });
+    rig.ok(set_label("bench3"));
+    assert_eq!(rig.ok(set_label("")), Reply::SetLabel { label: "itch-C02718" });
     assert_eq!(hello_label(&mut rig), "itch-C02718");
     assert_eq!(rig.board.saved, ["bench3", ""]);
 }
@@ -37,36 +34,26 @@ fn an_empty_label_restores_the_default_without_saving_it() {
 #[test]
 fn setting_the_default_label_by_name_saves_no_custom_label() {
     let mut rig = TestRig::new();
-    assert_eq!(rig.ok(set_label(TOKEN, "itch-C02718")), Reply::SetLabel { label: "itch-C02718" });
+    assert_eq!(rig.ok(set_label("itch-C02718")), Reply::SetLabel { label: "itch-C02718" });
     assert_eq!(rig.board.saved, [""]);
-}
-
-#[test]
-fn set_label_needs_the_lease() {
-    let mut rig = TestRig::new();
-    assert_eq!(rig.refused(set_label(0, "bench3")), ErrorCode::LeaseRequired);
-    rig.ok(set_label(TOKEN, "bench3"));
-    assert_eq!(rig.refused(set_label(OTHER, "bench4")), ErrorCode::LeaseLost);
-    assert_eq!(hello_label(&mut rig), "bench3");
-    assert_eq!(rig.board.saved, ["bench3"]);
 }
 
 #[test]
 fn a_label_of_64_bytes_is_accepted_and_65_is_malformed() {
     let mut rig = TestRig::new();
     let longest = "é".repeat(32);
-    assert_eq!(rig.ok(set_label(TOKEN, &longest)), Reply::SetLabel { label: &longest });
-    assert_eq!(rig.refused(set_label(TOKEN, &"a".repeat(65))), ErrorCode::Malformed);
+    assert_eq!(rig.ok(set_label(&longest)), Reply::SetLabel { label: &longest });
+    assert_eq!(rig.refused(set_label(&"a".repeat(65))), ErrorCode::Malformed);
     assert_eq!(hello_label(&mut rig), longest);
 }
 
 #[test]
 fn a_save_failure_is_a_storage_fault_and_keeps_the_old_label() {
     let mut rig = TestRig::new();
-    rig.ok(set_label(TOKEN, "bench3"));
+    rig.ok(set_label("bench3"));
     rig.board.storage_fault = true;
-    assert_eq!(rig.refused(set_label(TOKEN, "bench4")), ErrorCode::StorageFault);
-    assert_eq!(rig.refused(set_label(TOKEN, "")), ErrorCode::StorageFault);
+    assert_eq!(rig.refused(set_label("bench4")), ErrorCode::StorageFault);
+    assert_eq!(rig.refused(set_label("")), ErrorCode::StorageFault);
     assert_eq!(hello_label(&mut rig), "bench3");
 }
 

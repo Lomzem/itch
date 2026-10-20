@@ -11,9 +11,6 @@ Each message lists its request body and its ok result body. The header (`type`, 
 | `0x05` | [`GetStatus`](#getstatus) |
 | `0x06` | [`SetLabel`](#setlabel) |
 | `0x07` | [`SetLogLevel`](#setloglevel) |
-| `0x08` | [`AcquireLease`](#acquirelease) |
-| `0x09` | [`RenewLease`](#renewlease) |
-| `0x0A` | [`ReleaseLease`](#releaselease) |
 
 | Type | Event |
 | --- | --- |
@@ -21,11 +18,11 @@ Each message lists its request body and its ok result body. The header (`type`, 
 
 Channel states are a `u16` with bit 0 = CH1 and bit 15 = CH16. A set bit means on (contact closed).
 
-The examples use `request_id` `0x12345678`, Lease token `0x0123456789ABCDEF` and Holder `qa@bench-pc acme_test.py`.
+The examples use `request_id` `0x12345678`.
 
 ## Hello
 
-`0x01`. Identifies the Rig and its protocol. It needs no Lease. `itch-py` sends it first on every connection and refuses a Rig whose `protocol` differs from its own.
+`0x01`. Identifies the Rig and its protocol without changing Rig state. Clients should send it first and refuse a Rig whose `protocol` differs from their own. Read the protocol number before decoding the rest of the result body (see [Versioning](README.md#versioning)).
 
 Request body: empty.
 
@@ -33,16 +30,15 @@ Result body:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `protocol` | `u16` | 1 |
+| `protocol` | `u16` | 2 |
 | `firmware_version` | `text` | For example `1.0.0` |
 | `dirty` | `bool` | Built from uncommitted code |
-| `features` | `u8` | Bit 0 = `wifi`. Other bits are 0 |
 | `channel_count` | `u8` | 16 |
 | `board_revision` | `text` | For example `A` |
 | `hardware_id` | `[u8; 6]` | The factory MAC |
 | `label` | `text` | At most 64 bytes. Defaults to `itch-` plus the last three Hardware ID bytes in uppercase hex |
 
-A client should warn when `dirty` is set or `features` has `wifi`: the Rig runs a development build.
+A client should warn when `dirty` is set: the Rig was built from uncommitted code.
 
 Request with `request_id` `0x12345678`:
 
@@ -50,13 +46,12 @@ Request with `request_id` `0x12345678`:
 01 78 56 34 12
 ```
 
-Reply from Rig `60:55:F9:C0:27:18`, firmware `1.0.0`, clean, no features, board revision `A`, default label `itch-C02718`:
+Reply from Rig `60:55:F9:C0:27:18`, firmware `1.0.0`, clean, board revision `A`, default label `itch-C02718`:
 
 ```hex
 81 78 56 34 12 00
-01 00
+02 00
 05 31 2e 30 2e 30
-00
 00
 10
 01 41
@@ -66,7 +61,7 @@ Reply from Rig `60:55:F9:C0:27:18`, firmware `1.0.0`, clean, no features, board 
 
 ## GetChannels
 
-`0x02`. Reads the commanded Channel state. It needs no Lease. While the expander is held in reset (see [Expander faults](errors.md#expander-faults)), it reports every Channel off.
+`0x02`. Reads the commanded Channel state. While the expander is held in reset (see [Expander faults](errors.md#expander-faults)), it reports every Channel off.
 
 Request body: empty.
 
@@ -91,13 +86,12 @@ Reply with CH1 and CH16 on:
 
 ## WriteChannels
 
-`0x03`. A Mask write: each Channel whose `mask` bit is set takes its `values` bit, and every other Channel stays as it was. It needs the Lease (see [Lease](README.md#lease)). The reply goes out once the contacts have settled. While the expander is held in reset it is refused with `HardwareFault`.
+`0x03`. A Mask write: each Channel whose `mask` bit is set takes its `values` bit, and every other Channel stays as it was. The reply goes out once the contacts have settled. While the expander is held in reset it is refused with `HardwareFault`.
 
 Request body:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `token` | `u64` | The Lease token |
 | `mask` | `u16` | The Channels to change |
 | `values` | `u16` | Their new states. Bits outside `mask` are ignored |
 
@@ -111,7 +105,6 @@ Request turning CH1 on and CH3 off:
 
 ```hex
 03 78 56 34 12
-ef cd ab 89 67 45 23 01
 05 00
 01 00
 ```
@@ -123,28 +116,11 @@ Reply, with CH16 already on:
 01 80
 ```
 
-Refused with `LeaseRequired` because the request carried token 0:
-
-```hex
-83 78 56 34 12 04 00
-```
-
-Refused with `LeaseLost` because `dev@laptop other.py` holds the Lease:
-
-```hex
-83 78 56 34 12 06
-13 64 65 76 40 6c 61 70 74 6f 70 20 6f 74 68 65 72 2e 70 79
-```
-
 ## Clear
 
-`0x04`. Turns every Channel off. It needs the Lease, and the reply goes out once the contacts have settled. While the expander is held in reset it is refused with `HardwareFault`.
+`0x04`. Turns every Channel off. The reply goes out once the contacts have settled. While the expander is held in reset it is refused with `HardwareFault`.
 
-Request body:
-
-| Field | Type | Notes |
-| --- | --- | --- |
-| `token` | `u64` | The Lease token |
+Request body: empty.
 
 Result body:
 
@@ -156,7 +132,6 @@ Request:
 
 ```hex
 04 78 56 34 12
-ef cd ab 89 67 45 23 01
 ```
 
 Reply:
@@ -168,7 +143,7 @@ Reply:
 
 ## GetStatus
 
-`0x05`. Reports the Rig's health since boot. It needs no Lease.
+`0x05`. Reports the Rig's health since boot.
 
 Request body: empty.
 
@@ -179,7 +154,6 @@ Result body:
 | `uptime_ms` | `u64` | Milliseconds since boot |
 | `reset_reason` | `u8` | Why the Rig last reset: a raw ESP32-S3 `SocResetReason`, listed in [`errors.md`](errors.md#reset-reasons). 0 = unknown |
 | `last_panic` | `text` | Where the previous boot panicked, such as `src/main.rs:88:5`. At most 64 bytes; a longer location keeps its end. Empty = no panic |
-| `holder` | `text` | The current Holder. Empty = the Rig is free |
 | `crc_failures` | `u32` | |
 | `oversized_frames` | `u32` | |
 | `malformed_frames` | `u32` | |
@@ -195,14 +169,13 @@ Request:
 05 78 56 34 12
 ```
 
-Reply from a Rig up for 1 h 2 min 3 s after a software reset, whose previous boot panicked at `src/main.rs:88:5`, held by `qa@bench-pc acme_test.py`, with counters 1 to 6 in order:
+Reply from a Rig up for 1 h 2 min 3 s after a software reset, whose previous boot panicked at `src/main.rs:88:5`, with counters 1 to 6 in order:
 
 ```hex
 85 78 56 34 12 00
 f8 ce 38 00 00 00 00 00
 03
 10 73 72 63 2f 6d 61 69 6e 2e 72 73 3a 38 38 3a 35
-18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79
 01 00 00 00
 02 00 00 00
 03 00 00 00
@@ -213,13 +186,12 @@ f8 ce 38 00 00 00 00 00
 
 ## SetLabel
 
-`0x06`. Renames the Rig. It needs the Lease. The Rig saves the label before it replies, so the reply means the label survives a reboot. An empty label, or the default label by name, restores the default `itch-` plus the last three Hardware ID bytes in uppercase hex, such as `itch-C02718`. The default is never saved. A failed save gets `StorageFault` and keeps the old label.
+`0x06`. Renames the Rig. The Rig saves the label before it replies, so the reply means the label survives a reboot. An empty label, or the default label by name, restores the default `itch-` plus the last three Hardware ID bytes in uppercase hex, such as `itch-C02718`. The default is never saved. A failed save gets `StorageFault` and keeps the old label.
 
 Request body:
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `token` | `u64` | The Lease token |
 | `label` | `text` | At most 64 bytes. Empty = restore the default |
 
 Result body:
@@ -232,7 +204,6 @@ Request to rename the Rig `bench3`:
 
 ```hex
 06 78 56 34 12
-ef cd ab 89 67 45 23 01
 06 62 65 6e 63 68 33
 ```
 
@@ -247,7 +218,6 @@ Request to restore the default:
 
 ```hex
 06 78 56 34 12
-ef cd ab 89 67 45 23 01
 00
 ```
 
@@ -267,7 +237,7 @@ Refused with `StorageFault`:
 
 ## SetLogLevel
 
-`0x07`. Sets which Log Events the Rig sends on this connection. It needs no Lease. The level is per connection and starts at off; over USB it lasts until the Rig reboots or the level changes. Setting it discards Log Events still queued for this connection, so a new script never receives an earlier one's backlog. `itch-py` sends it right after `Hello`, at off unless the user opted in.
+`0x07`. Sets which Log Events the Rig sends on this connection. The level is per connection and starts at off; over USB it lasts until the Rig reboots or the level changes. Setting it discards Log Events still queued for this connection, so a new script never receives an earlier one's backlog. Clients should send it after `Hello`, at off unless the user opted in. Log Events are emitted as they occur, even while the client sends no requests.
 
 Request body:
 
@@ -287,99 +257,6 @@ Reply:
 
 ```hex
 87 78 56 34 12 00
-```
-
-## AcquireLease
-
-`0x08`. Takes the Lease. A retried acquire with the current token succeeds. While another client holds a live Lease it gets `LeaseHeld` naming the Holder, unless `takeover` is set (see [Lease](README.md#lease)).
-
-Request body:
-
-| Field | Type | Notes |
-| --- | --- | --- |
-| `token` | `u64` | A random non-zero token chosen by the client |
-| `takeover` | `bool` | Replace a live Holder at once |
-| `holder` | `text` | At most 64 bytes. Describes the client to other users, such as `user@host script.py` |
-
-Result body:
-
-| Field | Type | Notes |
-| --- | --- | --- |
-| `ttl_ms` | `u32` | How long the Lease lives without a renewal: 10000 |
-
-Request:
-
-```hex
-08 78 56 34 12
-ef cd ab 89 67 45 23 01
-00
-18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79
-```
-
-Reply:
-
-```hex
-88 78 56 34 12 00
-10 27 00 00
-```
-
-Refused with `LeaseHeld` because `qa@bench-pc acme_test.py` holds the Lease:
-
-```hex
-88 78 56 34 12 05
-18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79
-```
-
-## RenewLease
-
-`0x09`. Keeps the Lease alive. Clients send it every third of `ttl_ms`.
-
-Request body:
-
-| Field | Type | Notes |
-| --- | --- | --- |
-| `token` | `u64` | The Lease token |
-| `holder` | `text` | At most 64 bytes, as in `AcquireLease` |
-
-Result body: empty.
-
-Request:
-
-```hex
-09 78 56 34 12
-ef cd ab 89 67 45 23 01
-18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79
-```
-
-Reply:
-
-```hex
-89 78 56 34 12 00
-```
-
-## ReleaseLease
-
-`0x0A`. Frees the Rig and leaves the Channels as they are. A token that doesn't hold the Lease makes it a no-op, so releasing twice is safe.
-
-Request body:
-
-| Field | Type | Notes |
-| --- | --- | --- |
-| `token` | `u64` | The Lease token |
-
-Result body: empty.
-
-Request:
-
-```hex
-0a 78 56 34 12
-ef cd ab 89 67 45 23 01
-```
-
-Reply:
-
-```hex
-8a 78 56 34 12 00
 ```
 
 ## Log

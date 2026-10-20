@@ -38,24 +38,6 @@ _Avoid_: reset, release
 A write that changes only the Channels selected by a mask and leaves every other Channel as it was.
 _Avoid_: partial set, masked set
 
-## Control
-
-**Lease**:
-Exclusive permission for one client to change a Rig's Channels, which lapses unless the holder keeps it alive.
-_Avoid_: lock, ownership
-
-**Session**:
-The part of a script during which it holds a Rig's Lease; the term QA use, so scripts need not deal with the Lease directly.
-_Avoid_: connection, transaction
-
-**Holder**:
-The client currently owning a Rig's Lease, identified by a human-readable description (user, host, script).
-_Avoid_: owner, master
-
-**Takeover**:
-Forcibly moving a Lease from its Holder to another client.
-_Avoid_: steal, break lock
-
 ## Identity
 
 **Label**:

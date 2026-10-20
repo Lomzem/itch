@@ -36,7 +36,6 @@ impl FakeBoard {
                 hardware_id: [0x60, 0x55, 0xF9, 0xC0, 0x27, 0x18],
                 firmware_version: "1.0.0",
                 dirty: false,
-                features: 0,
                 board_revision: "A",
                 reset_reason: 0x01,
                 last_panic: "",

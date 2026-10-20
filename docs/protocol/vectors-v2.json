@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "protocol": 1,
+  "protocol": 2,
   "messages": [
     {
       "name": "hello-request",
@@ -18,16 +18,15 @@
         "type": "Hello",
         "request_id": 305419896,
         "status": "Ok",
-        "protocol": 1,
+        "protocol": 2,
         "firmware_version": "1.0.0",
         "dirty": false,
-        "features": 0,
         "channel_count": 16,
         "board_revision": "A",
         "hardware_id": "60 55 f9 c0 27 18",
         "label": "itch-C02718"
       },
-      "payload": "81 78 56 34 12 00 01 00 05 31 2e 30 2e 30 00 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38"
+      "payload": "81 78 56 34 12 00 02 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38"
     },
     {
       "name": "hello-error",
@@ -66,11 +65,10 @@
         "kind": "request",
         "type": "WriteChannels",
         "request_id": 305419896,
-        "token": "0x0123456789abcdef",
         "mask": 5,
         "values": 1
       },
-      "payload": "03 78 56 34 12 ef cd ab 89 67 45 23 01 05 00 01 00"
+      "payload": "03 78 56 34 12 05 00 01 00"
     },
     {
       "name": "write-channels-ok",
@@ -84,36 +82,13 @@
       "payload": "83 78 56 34 12 00 01 80"
     },
     {
-      "name": "write-channels-lease-required",
-      "message": {
-        "kind": "response",
-        "type": "WriteChannels",
-        "request_id": 305419896,
-        "status": "LeaseRequired",
-        "detail": ""
-      },
-      "payload": "83 78 56 34 12 04 00"
-    },
-    {
-      "name": "write-channels-lease-lost",
-      "message": {
-        "kind": "response",
-        "type": "WriteChannels",
-        "request_id": 305419896,
-        "status": "LeaseLost",
-        "detail": "dev@laptop other.py"
-      },
-      "payload": "83 78 56 34 12 06 13 64 65 76 40 6c 61 70 74 6f 70 20 6f 74 68 65 72 2e 70 79"
-    },
-    {
       "name": "clear-request",
       "message": {
         "kind": "request",
         "type": "Clear",
-        "request_id": 305419896,
-        "token": "0x0123456789abcdef"
+        "request_id": 305419896
       },
-      "payload": "04 78 56 34 12 ef cd ab 89 67 45 23 01"
+      "payload": "04 78 56 34 12"
     },
     {
       "name": "clear-ok",
@@ -145,7 +120,6 @@
         "uptime_ms": 3723000,
         "reset_reason": 3,
         "last_panic": "src/main.rs:88:5",
-        "holder": "qa@bench-pc acme_test.py",
         "crc_failures": 1,
         "oversized_frames": 2,
         "malformed_frames": 3,
@@ -153,7 +127,7 @@
         "expander_faults": 5,
         "usb_tx_dropped": 6
       },
-      "payload": "85 78 56 34 12 00 f8 ce 38 00 00 00 00 00 03 10 73 72 63 2f 6d 61 69 6e 2e 72 73 3a 38 38 3a 35 18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79 01 00 00 00 02 00 00 00 03 00 00 00 04 00 00 00 05 00 00 00 06 00 00 00"
+      "payload": "85 78 56 34 12 00 f8 ce 38 00 00 00 00 00 03 10 73 72 63 2f 6d 61 69 6e 2e 72 73 3a 38 38 3a 35 01 00 00 00 02 00 00 00 03 00 00 00 04 00 00 00 05 00 00 00 06 00 00 00"
     },
     {
       "name": "get-status-ok-fresh-boot",
@@ -165,7 +139,6 @@
         "uptime_ms": 250,
         "reset_reason": 1,
         "last_panic": "",
-        "holder": "",
         "crc_failures": 0,
         "oversized_frames": 0,
         "malformed_frames": 0,
@@ -173,7 +146,7 @@
         "expander_faults": 0,
         "usb_tx_dropped": 0
       },
-      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
     },
     {
       "name": "set-label-request",
@@ -181,10 +154,9 @@
         "kind": "request",
         "type": "SetLabel",
         "request_id": 305419896,
-        "token": "0x0123456789abcdef",
         "label": "bench3"
       },
-      "payload": "06 78 56 34 12 ef cd ab 89 67 45 23 01 06 62 65 6e 63 68 33"
+      "payload": "06 78 56 34 12 06 62 65 6e 63 68 33"
     },
     {
       "name": "set-label-restore-default-request",
@@ -192,10 +164,9 @@
         "kind": "request",
         "type": "SetLabel",
         "request_id": 305419896,
-        "token": "0x0123456789abcdef",
         "label": ""
       },
-      "payload": "06 78 56 34 12 ef cd ab 89 67 45 23 01 00"
+      "payload": "06 78 56 34 12 00"
     },
     {
       "name": "set-label-ok",
@@ -229,81 +200,6 @@
         "detail": ""
       },
       "payload": "86 78 56 34 12 09 00"
-    },
-    {
-      "name": "acquire-lease-request",
-      "message": {
-        "kind": "request",
-        "type": "AcquireLease",
-        "request_id": 305419896,
-        "token": "0x0123456789abcdef",
-        "takeover": false,
-        "holder": "qa@bench-pc acme_test.py"
-      },
-      "payload": "08 78 56 34 12 ef cd ab 89 67 45 23 01 00 18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79"
-    },
-    {
-      "name": "acquire-lease-ok",
-      "message": {
-        "kind": "response",
-        "type": "AcquireLease",
-        "request_id": 305419896,
-        "status": "Ok",
-        "ttl_ms": 10000
-      },
-      "payload": "88 78 56 34 12 00 10 27 00 00"
-    },
-    {
-      "name": "acquire-lease-held",
-      "message": {
-        "kind": "response",
-        "type": "AcquireLease",
-        "request_id": 305419896,
-        "status": "LeaseHeld",
-        "detail": "qa@bench-pc acme_test.py"
-      },
-      "payload": "88 78 56 34 12 05 18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79"
-    },
-    {
-      "name": "renew-lease-request",
-      "message": {
-        "kind": "request",
-        "type": "RenewLease",
-        "request_id": 305419896,
-        "token": "0x0123456789abcdef",
-        "holder": "qa@bench-pc acme_test.py"
-      },
-      "payload": "09 78 56 34 12 ef cd ab 89 67 45 23 01 18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79"
-    },
-    {
-      "name": "renew-lease-ok",
-      "message": {
-        "kind": "response",
-        "type": "RenewLease",
-        "request_id": 305419896,
-        "status": "Ok"
-      },
-      "payload": "89 78 56 34 12 00"
-    },
-    {
-      "name": "release-lease-request",
-      "message": {
-        "kind": "request",
-        "type": "ReleaseLease",
-        "request_id": 305419896,
-        "token": "0x0123456789abcdef"
-      },
-      "payload": "0a 78 56 34 12 ef cd ab 89 67 45 23 01"
-    },
-    {
-      "name": "release-lease-ok",
-      "message": {
-        "kind": "response",
-        "type": "ReleaseLease",
-        "request_id": 305419896,
-        "status": "Ok"
-      },
-      "payload": "8a 78 56 34 12 00"
     },
     {
       "name": "set-log-level-request",
@@ -345,8 +241,8 @@
     },
     {
       "name": "hello-ok",
-      "payload": "81 78 56 34 12 00 01 00 05 31 2e 30 2e 30 00 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38",
-      "frame": "00 02 25 06 81 78 56 34 12 02 01 07 05 31 2e 30 2e 30 01 18 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38 7a 14 00"
+      "payload": "81 78 56 34 12 00 02 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38",
+      "frame": "00 02 24 06 81 78 56 34 12 02 02 07 05 31 2e 30 2e 30 18 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38 73 94 00"
     },
     {
       "name": "empty-payload",
@@ -422,7 +318,7 @@
     },
     {
       "name": "mid-stream-join",
-      "stream": "41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38 7a 14 00 00 02 05 08 01 78 56 34 12 c2 f2 00",
+      "stream": "41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38 73 94 00 00 02 05 08 01 78 56 34 12 c2 f2 00",
       "payloads": [
         "01 78 56 34 12"
       ],
@@ -443,42 +339,27 @@
     },
     {
       "name": "write-channels-short-body",
-      "payload": "03 78 56 34 12 ef cd ab 89 67 45 23 01 01 80 01",
+      "payload": "03 78 56 34 12 01 80 01",
       "error": "Malformed"
     },
     {
       "name": "clear-trailing-byte",
-      "payload": "04 78 56 34 12 ef cd ab 89 67 45 23 01 00",
+      "payload": "04 78 56 34 12 00",
       "error": "Malformed"
     },
     {
-      "name": "acquire-lease-bad-bool",
-      "payload": "08 78 56 34 12 ef cd ab 89 67 45 23 01 02 18 71 61 40 62 65 6e 63 68 2d 70 63 20 61 63 6d 65 5f 74 65 73 74 2e 70 79",
-      "error": "Malformed"
-    },
-    {
-      "name": "acquire-lease-holder-invalid-utf8",
-      "payload": "08 78 56 34 12 ef cd ab 89 67 45 23 01 00 02 c3 28",
-      "error": "Malformed"
-    },
-    {
-      "name": "acquire-lease-holder-over-64-bytes",
-      "payload": "08 78 56 34 12 ef cd ab 89 67 45 23 01 00 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61",
-      "error": "Malformed"
-    },
-    {
-      "name": "renew-lease-holder-longer-than-body",
-      "payload": "09 78 56 34 12 ef cd ab 89 67 45 23 01 0c 71 61",
+      "name": "set-label-label-longer-than-body",
+      "payload": "06 78 56 34 12 0c 71 61",
       "error": "Malformed"
     },
     {
       "name": "set-label-label-over-64-bytes",
-      "payload": "06 78 56 34 12 ef cd ab 89 67 45 23 01 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61",
+      "payload": "06 78 56 34 12 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61",
       "error": "Malformed"
     },
     {
       "name": "set-label-label-invalid-utf8",
-      "payload": "06 78 56 34 12 ef cd ab 89 67 45 23 01 02 c3 28",
+      "payload": "06 78 56 34 12 02 c3 28",
       "error": "Malformed"
     },
     {
@@ -493,32 +374,32 @@
     },
     {
       "name": "hello-ok-short-body",
-      "payload": "81 78 56 34 12 00 01 00 05 31 2e 30 2e 30 00 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31",
+      "payload": "81 78 56 34 12 00 02 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31",
       "error": "Malformed"
     },
     {
       "name": "hello-ok-trailing-byte",
-      "payload": "81 78 56 34 12 00 01 00 05 31 2e 30 2e 30 00 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38 00",
+      "payload": "81 78 56 34 12 00 02 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38 00",
       "error": "Malformed"
     },
     {
       "name": "hello-ok-bad-bool",
-      "payload": "81 78 56 34 12 00 01 00 05 31 2e 30 2e 30 02 00 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38",
+      "payload": "81 78 56 34 12 00 02 00 05 31 2e 30 2e 30 02 10 01 41 60 55 f9 c0 27 18 0b 69 74 63 68 2d 43 30 32 37 31 38",
       "error": "Malformed"
     },
     {
       "name": "hello-ok-label-invalid-utf8",
-      "payload": "81 78 56 34 12 00 01 00 05 31 2e 30 2e 30 00 00 10 01 41 60 55 f9 c0 27 18 02 c3 28",
+      "payload": "81 78 56 34 12 00 02 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 02 c3 28",
       "error": "Malformed"
     },
     {
       "name": "hello-ok-label-over-64-bytes",
-      "payload": "81 78 56 34 12 00 01 00 05 31 2e 30 2e 30 00 00 10 01 41 60 55 f9 c0 27 18 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61",
+      "payload": "81 78 56 34 12 00 02 00 05 31 2e 30 2e 30 00 10 01 41 60 55 f9 c0 27 18 41 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61 61",
       "error": "Malformed"
     },
     {
       "name": "get-status-ok-last-panic-over-64-bytes",
-      "payload": "85 78 56 34 12 00 01 00 00 00 00 00 00 00 01 41 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "payload": "85 78 56 34 12 00 01 00 00 00 00 00 00 00 01 41 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 70 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
       "error": "Malformed"
     },
     {
@@ -555,6 +436,11 @@
       "name": "log-event-text-invalid-utf8",
       "payload": "40 02 00 00 00 00 c3 28",
       "error": "Malformed"
+    },
+    {
+      "name": "removed-request-type",
+      "payload": "08 78 56 34 12",
+      "error": "UnknownRequest"
     }
   ]
 }
