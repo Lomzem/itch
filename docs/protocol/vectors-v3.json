@@ -799,6 +799,31 @@
       "error": "Malformed"
     },
     {
+      "name": "set-address-static-multicast-address",
+      "payload": "0e 78 56 34 12 00 01 e0 00 00 01 18 c0 00 02 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-address-static-last-multicast-address",
+      "payload": "0e 78 56 34 12 00 01 ef ff ff ff 18 c0 00 02 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-address-static-broadcast-address",
+      "payload": "0e 78 56 34 12 00 01 ff ff ff ff 18 c0 00 02 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-address-static-multicast-gateway",
+      "payload": "0e 78 56 34 12 00 01 c0 00 02 0a 18 e0 00 00 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-address-static-broadcast-gateway",
+      "payload": "0e 78 56 34 12 00 01 c0 00 02 0a 18 ff ff ff ff",
+      "error": "Malformed"
+    },
+    {
       "name": "set-address-mode-unknown",
       "payload": "0e 78 56 34 12 00 02 c0 00 02 0a 18 c0 00 02 01",
       "error": "Malformed"

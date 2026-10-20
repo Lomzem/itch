@@ -79,6 +79,11 @@ fn an_address_configuration_out_of_range_is_malformed_and_changes_nothing() {
         (AddressMode::Static, [0; 4], 24, GATEWAY),
         (AddressMode::Static, ADDRESS, 0, GATEWAY),
         (AddressMode::Static, ADDRESS, 33, GATEWAY),
+        (AddressMode::Static, [224, 0, 0, 1], 24, GATEWAY),
+        (AddressMode::Static, [239, 255, 255, 250], 24, GATEWAY),
+        (AddressMode::Static, [255, 255, 255, 255], 24, GATEWAY),
+        (AddressMode::Static, ADDRESS, 24, [224, 0, 0, 1]),
+        (AddressMode::Static, ADDRESS, 24, [255, 255, 255, 255]),
     ] {
         let set = SetAddress { holder: "", mode, address, prefix, gateway };
         assert_eq!(rig.refused(Request::SetAddress(set)), ErrorCode::Malformed, "{set:?}");

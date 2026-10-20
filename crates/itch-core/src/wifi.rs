@@ -63,7 +63,8 @@ pub enum Addressing {
 impl Addressing {
     /// The configuration the protocol's `mode`, `address`, `prefix` and
     /// `gateway` describe, or `None` unless DHCP has them all zero, or
-    /// static has a non-zero address and a prefix of 1 to 32.
+    /// static has a unicast address, a prefix of 1 to 32, and a zero or
+    /// unicast gateway.
     pub fn new(mode: AddressMode, address: [u8; 4], prefix: u8, gateway: [u8; 4]) -> Option<Self> {
         match mode {
             AddressMode::Dhcp => {
@@ -103,8 +104,8 @@ impl Addressing {
     }
 }
 
-/// A static IPv4 address: a non-zero address, a prefix length of 1 to 32,
-/// and an optional gateway.
+/// A static IPv4 address: a unicast address, a prefix length of 1 to 32,
+/// and an optional unicast gateway.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StaticAddress {
     address: [u8; 4],
@@ -114,10 +115,13 @@ pub struct StaticAddress {
 }
 
 impl StaticAddress {
-    /// `None` unless `address` is non-zero and `prefix` 1 to 32. A zero
-    /// `gateway` means none.
+    /// `None` unless `address` is unicast and `prefix` 1 to 32, and
+    /// `gateway` is zero, meaning none, or unicast. The network stack
+    /// panics on any other address or gateway.
     pub fn new(address: [u8; 4], prefix: u8, gateway: [u8; 4]) -> Option<Self> {
-        let valid = address != [0; 4] && (1..=32).contains(&prefix);
+        let valid = is_unicast(address)
+            && (1..=32).contains(&prefix)
+            && (gateway == [0; 4] || is_unicast(gateway));
         valid.then_some(Self { address, prefix, gateway })
     }
 
@@ -133,4 +137,10 @@ impl StaticAddress {
     pub fn gateway(&self) -> Option<[u8; 4]> {
         (self.gateway != [0; 4]).then_some(self.gateway)
     }
+}
+
+/// Whether `address` is unicast: not zero, not the broadcast address
+/// 255.255.255.255, and not multicast (224.0.0.0/4).
+fn is_unicast(address: [u8; 4]) -> bool {
+    address != [0; 4] && address != [255; 4] && !(224..=239).contains(&address[0])
 }

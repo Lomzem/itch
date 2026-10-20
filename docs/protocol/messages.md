@@ -431,11 +431,11 @@ Request body:
 | --- | --- | --- |
 | `holder` | `text` | At most 64 bytes. Empty = no Holder. See [Locks](README.md#locks) |
 | `mode` | `u8` | 0 DHCP, 1 static. Anything higher is `Malformed` |
-| `address` | `[u8; 4]` | Static: any non-zero address. DHCP: zero |
+| `address` | `[u8; 4]` | Static: a unicast address, so not zero, not `255.255.255.255` and not multicast (`224.0.0.0` to `239.255.255.255`). DHCP: zero |
 | `prefix` | `u8` | Static: 1 to 32. DHCP: zero |
-| `gateway` | `[u8; 4]` | Static: zero = no gateway. DHCP: zero |
+| `gateway` | `[u8; 4]` | Static: zero = no gateway, otherwise a unicast address as for `address`. DHCP: zero |
 
-Anything else, such as DHCP with a non-zero field, is `Malformed`. `GetStatus` reports the configuration as `mode`, `address`, `prefix` and `gateway`, beside the `current_address` the Rig has.
+Anything else, such as DHCP with a non-zero field or a multicast static address, is `Malformed`. `GetStatus` reports the configuration as `mode`, `address`, `prefix` and `gateway`, beside the `current_address` the Rig has.
 
 Result body: empty.
 

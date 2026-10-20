@@ -120,7 +120,7 @@ A `Hello` refused with `Busy` and detail `queue full`, an illustrative codec exa
 | `[u8; N]` | `N` raw bytes |
 
 - Label text and Holder names are at most 64 bytes. A Wi-Fi SSID is at most 32 bytes and its passphrase 8 to 63.
-- An IPv4 address is a `[u8; 4]` in network order (`c0 00 02 0a` is `192.0.2.10`).
+- An IPv4 address is a `[u8; 4]` in network order (`c0 00 02 0a` is `192.0.2.10`). A static address or gateway must be unicast: not zero, not `255.255.255.255` and not multicast (`224.0.0.0/4`).
 - Enums are `u8`, counters `u32`, uptime a `u64` in milliseconds.
 - The Hardware ID is 6 raw bytes, the factory MAC in transmission order (`60 55 f9 c0 27 18` is `60:55:F9:C0:27:18`).
 
