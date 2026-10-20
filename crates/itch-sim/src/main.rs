@@ -28,9 +28,10 @@ Once listening it prints one line: `itch-sim listening on tcp://HOST:PORT`.
 Like a Rig over Wi-Fi, it serves at most 4 connections at once and closes
 any more straight away.
 
-The label and Wi-Fi credentials live in memory, so every run starts with
-the default label and no credentials. With credentials, `GetStatus` reports
-the Wi-Fi link connected at the address the sim listens on.";
+The label, Wi-Fi credentials and address configuration live in memory, so
+every run starts with the default label, no credentials and DHCP. With
+credentials, `GetStatus` reports the Wi-Fi link connected at the static
+address if one is set, otherwise at the address the sim listens on.";
 
 /// The most connections served at once, as by a Rig over Wi-Fi.
 const MAX_CONNECTIONS: usize = 4;

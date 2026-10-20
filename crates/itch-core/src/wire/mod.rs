@@ -2,6 +2,7 @@
 //! out in `docs/protocol/`. Decoding is strict: exact sizes, no trailing
 //! bytes, valid bools, enums and UTF-8.
 
+mod address;
 mod channels;
 mod codec;
 mod hello;
@@ -11,6 +12,7 @@ mod log;
 mod status;
 mod wifi;
 
+pub use address::{AddressMode, SetAddress};
 pub use channels::WriteChannels;
 use codec::{Reader, Writer};
 pub use hello::HelloReply;
@@ -61,6 +63,7 @@ pub enum RequestType {
     Lock = 0x0B,
     ReleaseLock = 0x0C,
     SetWifi = 0x0D,
+    SetAddress = 0x0E,
 }
 
 impl RequestType {
@@ -77,6 +80,7 @@ impl RequestType {
             0x0B => Lock,
             0x0C => ReleaseLock,
             0x0D => SetWifi,
+            0x0E => SetAddress,
             _ => return None,
         })
     }
@@ -138,6 +142,7 @@ pub enum Request<'a> {
     Lock(Lock<'a>),
     ReleaseLock { holder: &'a str },
     SetWifi(SetWifi<'a>),
+    SetAddress(SetAddress<'a>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,6 +181,7 @@ pub enum Reply<'a> {
     Lock,
     ReleaseLock,
     SetWifi,
+    SetAddress,
 }
 
 /// What a response must echo from its request: read first, so even a
@@ -295,6 +301,7 @@ impl<'a> Request<'a> {
             Request::Lock(_) => RequestType::Lock,
             Request::ReleaseLock { .. } => RequestType::ReleaseLock,
             Request::SetWifi(_) => RequestType::SetWifi,
+            Request::SetAddress(_) => RequestType::SetAddress,
         }
     }
 
@@ -312,6 +319,7 @@ impl<'a> Request<'a> {
             RequestType::Lock => Request::Lock(Lock::decode(&mut r)?),
             RequestType::ReleaseLock => Request::ReleaseLock { holder: r.text(MAX_HOLDER)? },
             RequestType::SetWifi => Request::SetWifi(SetWifi::decode(&mut r)?),
+            RequestType::SetAddress => Request::SetAddress(SetAddress::decode(&mut r)?),
         };
         r.finish()?;
         Ok(request)
@@ -326,6 +334,7 @@ impl<'a> Request<'a> {
             Request::SetLogLevel { level } => w.u8(*level as u8),
             Request::Lock(lock) => lock.encode(w),
             Request::SetWifi(set) => set.encode(w),
+            Request::SetAddress(set) => set.encode(w),
         }
     }
 }
@@ -343,6 +352,7 @@ impl<'a> Reply<'a> {
             Reply::Lock => RequestType::Lock,
             Reply::ReleaseLock => RequestType::ReleaseLock,
             Reply::SetWifi => RequestType::SetWifi,
+            Reply::SetAddress => RequestType::SetAddress,
         }
     }
 
@@ -358,6 +368,7 @@ impl<'a> Reply<'a> {
             RequestType::Lock => Reply::Lock,
             RequestType::ReleaseLock => Reply::ReleaseLock,
             RequestType::SetWifi => Reply::SetWifi,
+            RequestType::SetAddress => Reply::SetAddress,
         })
     }
 
@@ -369,7 +380,11 @@ impl<'a> Reply<'a> {
             | Reply::Clear { state } => w.u16(*state),
             Reply::GetStatus(status) => status.encode(w),
             Reply::SetLabel { label } => w.text(label),
-            Reply::SetLogLevel | Reply::Lock | Reply::ReleaseLock | Reply::SetWifi => {}
+            Reply::SetLogLevel
+            | Reply::Lock
+            | Reply::ReleaseLock
+            | Reply::SetWifi
+            | Reply::SetAddress => {}
         }
     }
 }

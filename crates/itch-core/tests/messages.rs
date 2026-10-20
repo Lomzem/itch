@@ -5,8 +5,9 @@ use std::net::Ipv4Addr;
 use common::{cases, hex, vectors};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::wire::{
-    DecodeError, ErrorCode, Event, HelloReply, Link, Lock, LogEvent, LogLevel, Message, PROTOCOL,
-    Reply, Request, RequestType, Response, SetLabel, SetWifi, StatusReply, WriteChannels,
+    AddressMode, DecodeError, ErrorCode, Event, HelloReply, Link, Lock, LogEvent, LogLevel,
+    Message, PROTOCOL, Reply, Request, RequestType, Response, SetAddress, SetLabel, SetWifi,
+    StatusReply, WriteChannels,
 };
 use serde_json::Value;
 
@@ -83,6 +84,7 @@ fn request_type(name: &str) -> RequestType {
         "Lock" => RequestType::Lock,
         "ReleaseLock" => RequestType::ReleaseLock,
         "SetWifi" => RequestType::SetWifi,
+        "SetAddress" => RequestType::SetAddress,
         _ => panic!("unknown request type {name}"),
     }
 }
@@ -114,6 +116,13 @@ fn request(request_type: RequestType, json: &Value) -> Request<'_> {
             holder: json["holder"].as_str().unwrap(),
             ssid: json["ssid"].as_str().unwrap(),
             passphrase: json["passphrase"].as_str().unwrap(),
+        }),
+        RequestType::SetAddress => Request::SetAddress(SetAddress {
+            holder: json["holder"].as_str().unwrap(),
+            mode: AddressMode::from_u8(int(&json["mode"])).unwrap(),
+            address: address(&json["address"]),
+            prefix: int(&json["prefix"]),
+            gateway: address(&json["gateway"]),
         }),
     }
 }
@@ -147,12 +156,17 @@ fn reply(request_type: RequestType, json: &Value) -> Reply<'_> {
             ssid: json["ssid"].as_str().unwrap(),
             link: Link::from_u8(int(&json["link"])).unwrap(),
             current_address: address(&json["current_address"]),
+            mode: AddressMode::from_u8(int(&json["mode"])).unwrap(),
+            address: address(&json["address"]),
+            prefix: int(&json["prefix"]),
+            gateway: address(&json["gateway"]),
         }),
         RequestType::SetLabel => Reply::SetLabel { label: json["label"].as_str().unwrap() },
         RequestType::SetLogLevel => Reply::SetLogLevel,
         RequestType::Lock => Reply::Lock,
         RequestType::ReleaseLock => Reply::ReleaseLock,
         RequestType::SetWifi => Reply::SetWifi,
+        RequestType::SetAddress => Reply::SetAddress,
     }
 }
 

@@ -2,7 +2,7 @@
 //! `SimBoard` (itch-sim) and `FakeBoard` (tests).
 
 use crate::label::Label;
-use crate::wifi::Credentials;
+use crate::wifi::{Addressing, Credentials};
 use crate::wire::Link;
 
 pub trait Board {
@@ -44,6 +44,14 @@ pub trait Board {
     /// Persists `wifi` before returning, so it survives a reboot, keeping
     /// every other setting. `None` clears the credentials.
     fn save_wifi(&mut self, wifi: Option<&Credentials>) -> Result<(), StorageFault>;
+
+    /// How the Rig was last set to take its IPv4 address, read once at
+    /// boot. DHCP when never set, or for a missing or corrupt record.
+    fn load_addressing(&mut self) -> Addressing;
+
+    /// Persists `addressing` before returning, so it survives a reboot,
+    /// keeping every other setting.
+    fn save_addressing(&mut self, addressing: &Addressing) -> Result<(), StorageFault>;
 
     /// The Wi-Fi link now, and the address the Rig has on it.
     fn network(&self) -> Network;

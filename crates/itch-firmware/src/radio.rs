@@ -1,13 +1,14 @@
 //! The Wi-Fi radio and the network stack under the TCP connections. The
 //! Rig joins the network its credentials name as a WPA2-Personal station,
-//! takes a DHCP address, and joins again after any failure or drop. New
-//! credentials from the board make it leave and join the new network;
-//! without credentials the radio is off. If the radio doesn't start, the
-//! Rig carries on over USB alone.
+//! takes its address by DHCP or as configured, and joins again after any
+//! failure or drop. New credentials from the board make it leave and join
+//! the new network; without credentials the radio is off. A new address
+//! configuration applies at once, without leaving. If the radio doesn't
+//! start, the Rig carries on over USB alone.
 
 use embassy_executor::Spawner;
 use embassy_futures::select::{Either, select};
-use embassy_net::{Runner, Stack, StackResources};
+use embassy_net::{ConfigV4, Ipv4Address, Ipv4Cidr, Runner, Stack, StackResources, StaticConfigV4};
 use embassy_time::{Duration, Timer};
 use esp_hal::peripherals;
 use esp_hal::rng::Rng;
@@ -15,7 +16,7 @@ use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{
     AuthenticationMethodConfig, Config, ControllerConfig, Interface, WifiController,
 };
-use itch_core::wifi::Credentials;
+use itch_core::wifi::{Addressing, Credentials};
 use static_cell::StaticCell;
 
 use crate::connections::{TCP_CONNECTIONS, USB};
@@ -25,8 +26,9 @@ use crate::wifi::{Radio, WIFI};
 /// How long the Rig waits before joining again after a failure or a drop.
 const RETRY: Duration = Duration::from_secs(5);
 
-/// How long the Rig stays on its network after the board hands over new
-/// credentials, so the reply to the change reaches its client first.
+/// How long the Rig stays on its network, at its address, after the board
+/// hands over new credentials or a new address configuration, so the reply
+/// to the change reaches its client first.
 const LEAVE_DELAY: Duration = Duration::from_secs(1);
 
 /// The network stack's socket slots: DHCP, the TCP connections, and one
@@ -37,8 +39,14 @@ static RESOURCES: StaticCell<StackResources<SOCKETS>> = StaticCell::new();
 
 /// Sets up the heap, the radio and the network stack, and spawns their
 /// tasks and the TCP connections' tasks. The radio joins with
-/// `credentials`, the ones saved at boot.
-pub fn start(spawner: Spawner, wifi: peripherals::WIFI<'static>, credentials: Option<Credentials>) {
+/// `credentials`, and the stack takes its address as `addressing` says,
+/// both as saved at boot.
+pub fn start(
+    spawner: Spawner,
+    wifi: peripherals::WIFI<'static>,
+    credentials: Option<Credentials>,
+    addressing: Addressing,
+) {
     // The radio's buffers and tasks. It was seen to need about 57 KiB at
     // its peak with one connection; the TCP connections' buffers are their
     // tasks' own RAM, not heap. Most of the heap is RAM the bootloader no
@@ -48,14 +56,13 @@ pub fn start(spawner: Spawner, wifi: peripherals::WIFI<'static>, credentials: Op
 
     let rng = Rng::new();
     let seed = (u64::from(rng.random()) << 32) | u64::from(rng.random());
-    let (stack, runner) = embassy_net::new(
-        Interface::station(),
-        embassy_net::Config::dhcpv4(Default::default()),
-        RESOURCES.init(StackResources::new()),
-        seed,
-    );
+    let mut config = embassy_net::Config::dhcpv4(Default::default());
+    config.ipv4 = config_v4(addressing);
+    let (stack, runner) =
+        embassy_net::new(Interface::station(), config, RESOURCES.init(StackResources::new()), seed);
     spawner.spawn(net(runner).unwrap());
     spawner.spawn(address(stack).unwrap());
+    spawner.spawn(readdress(stack).unwrap());
     spawner.spawn(join(wifi, credentials).unwrap());
     for slot in USB + 1..=TCP_CONNECTIONS {
         spawner.spawn(tcp::tcp(stack, slot).unwrap());
@@ -94,6 +101,39 @@ async fn address(stack: Stack<'static>) {
             }
             None => stack.wait_config_up().await,
         }
+    }
+}
+
+/// Has the network stack take its address as the board says, once the
+/// reply to the change has had time to go out. A static address applies
+/// whether or not the Rig is joined, so it is the Rig's address from its
+/// next join.
+#[embassy_executor::task]
+async fn readdress(stack: Stack<'static>) {
+    loop {
+        let addressing = WIFI.addressing().await;
+        Timer::after(LEAVE_DELAY).await;
+        stack.set_config_v4(config_v4(addressing));
+        // `address` hears of an address coming or going, but not of one
+        // address replacing another.
+        let address = stack.config_v4().map(|config| config.address.address());
+        WIFI.set_address(address.map(|address| address.octets()));
+        if let Some(address) = address {
+            log::info!("serving tcp://{address}:{PORT}");
+        }
+    }
+}
+
+/// The network stack's IPv4 configuration for `addressing`. The Rig
+/// resolves no names, so it has no DNS servers.
+fn config_v4(addressing: Addressing) -> ConfigV4 {
+    match addressing {
+        Addressing::Dhcp => ConfigV4::Dhcp(Default::default()),
+        Addressing::Static(set) => ConfigV4::Static(StaticConfigV4 {
+            address: Ipv4Cidr::new(Ipv4Address::from(set.address()), set.prefix()),
+            gateway: set.gateway().map(Ipv4Address::from),
+            dns_servers: Default::default(),
+        }),
     }
 }
 

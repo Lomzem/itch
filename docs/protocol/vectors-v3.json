@@ -155,9 +155,13 @@
         "wifi_configured": true,
         "ssid": "ExampleRigNet",
         "link": 2,
-        "current_address": "192.0.2.10"
+        "current_address": "192.0.2.10",
+        "mode": 1,
+        "address": "192.0.2.10",
+        "prefix": 24,
+        "gateway": "192.0.2.1"
       },
-      "payload": "85 78 56 34 12 00 f8 ce 38 00 00 00 00 00 03 10 73 72 63 2f 6d 61 69 6e 2e 72 73 3a 38 38 3a 35 01 00 00 00 02 00 00 00 03 00 00 00 04 00 00 00 05 00 00 00 06 00 00 00 09 61 6c 69 63 65 40 77 73 33 01 0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74 02 c0 00 02 0a"
+      "payload": "85 78 56 34 12 00 f8 ce 38 00 00 00 00 00 03 10 73 72 63 2f 6d 61 69 6e 2e 72 73 3a 38 38 3a 35 01 00 00 00 02 00 00 00 03 00 00 00 04 00 00 00 05 00 00 00 06 00 00 00 09 61 6c 69 63 65 40 77 73 33 01 0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74 02 c0 00 02 0a 01 c0 00 02 0a 18 c0 00 02 01"
     },
     {
       "name": "get-status-ok-fresh-boot",
@@ -179,9 +183,13 @@
         "wifi_configured": false,
         "ssid": "",
         "link": 0,
-        "current_address": "0.0.0.0"
+        "current_address": "0.0.0.0",
+        "mode": 0,
+        "address": "0.0.0.0",
+        "prefix": 0,
+        "gateway": "0.0.0.0"
       },
-      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
     },
     {
       "name": "set-label-request",
@@ -365,6 +373,69 @@
         "detail": ""
       },
       "payload": "8d 78 56 34 12 09 00"
+    },
+    {
+      "name": "set-address-static-request",
+      "message": {
+        "kind": "request",
+        "type": "SetAddress",
+        "request_id": 305419896,
+        "holder": "alice@ws3",
+        "mode": 1,
+        "address": "192.0.2.10",
+        "prefix": 24,
+        "gateway": "192.0.2.1"
+      },
+      "payload": "0e 78 56 34 12 09 61 6c 69 63 65 40 77 73 33 01 c0 00 02 0a 18 c0 00 02 01"
+    },
+    {
+      "name": "set-address-static-without-gateway-request",
+      "message": {
+        "kind": "request",
+        "type": "SetAddress",
+        "request_id": 305419896,
+        "holder": "",
+        "mode": 1,
+        "address": "192.0.2.10",
+        "prefix": 32,
+        "gateway": "0.0.0.0"
+      },
+      "payload": "0e 78 56 34 12 00 01 c0 00 02 0a 20 00 00 00 00"
+    },
+    {
+      "name": "set-address-dhcp-request",
+      "message": {
+        "kind": "request",
+        "type": "SetAddress",
+        "request_id": 305419896,
+        "holder": "",
+        "mode": 0,
+        "address": "0.0.0.0",
+        "prefix": 0,
+        "gateway": "0.0.0.0"
+      },
+      "payload": "0e 78 56 34 12 00 00 00 00 00 00 00 00 00 00 00"
+    },
+    {
+      "name": "set-address-ok",
+      "message": {
+        "kind": "response",
+        "type": "SetAddress",
+        "request_id": 305419896,
+        "status": "Ok"
+      },
+      "payload": "8e 78 56 34 12 00"
+    },
+    {
+      "name": "set-address-storage-fault",
+      "message": {
+        "kind": "response",
+        "type": "SetAddress",
+        "request_id": 305419896,
+        "status": "StorageFault",
+        "detail": ""
+      },
+      "payload": "8e 78 56 34 12 09 00"
     },
     {
       "name": "log-event",
@@ -679,22 +750,87 @@
     },
     {
       "name": "get-status-ok-wifi-configured-bad-bool",
-      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
       "error": "Malformed"
     },
     {
       "name": "get-status-ok-ssid-over-32-bytes",
-      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 21 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 02 00 00 00 00",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 21 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 73 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
       "error": "Malformed"
     },
     {
       "name": "get-status-ok-link-above-connected",
-      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
       "error": "Malformed"
     },
     {
       "name": "get-status-ok-short-current-address",
       "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-address-dhcp-with-address",
+      "payload": "0e 78 56 34 12 00 00 c0 00 02 0a 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-address-dhcp-with-prefix",
+      "payload": "0e 78 56 34 12 00 00 00 00 00 00 18 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-address-dhcp-with-gateway",
+      "payload": "0e 78 56 34 12 00 00 00 00 00 00 00 c0 00 02 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-address-static-zero-address",
+      "payload": "0e 78 56 34 12 00 01 00 00 00 00 18 c0 00 02 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-address-static-prefix-zero",
+      "payload": "0e 78 56 34 12 00 01 c0 00 02 0a 00 c0 00 02 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-address-static-prefix-over-32",
+      "payload": "0e 78 56 34 12 00 01 c0 00 02 0a 21 c0 00 02 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-address-mode-unknown",
+      "payload": "0e 78 56 34 12 00 02 c0 00 02 0a 18 c0 00 02 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-address-short-gateway",
+      "payload": "0e 78 56 34 12 00 01 c0 00 02 0a 18 c0 00 02",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-address-holder-over-64-bytes",
+      "payload": "0e 78 56 34 12 41 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 68 01 c0 00 02 0a 18 c0 00 02 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "set-address-ok-trailing-byte",
+      "payload": "8e 78 56 34 12 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-without-address-configuration",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-mode-unknown",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-short-gateway",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
       "error": "Malformed"
     },
     {

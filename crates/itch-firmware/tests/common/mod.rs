@@ -17,7 +17,8 @@ use itch_core::board::{Board, Counters};
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, LogControl, Rig};
 use itch_core::wire::{
-    Link, LogLevel, Message, Reply, Request, Response, SetLabel, SetWifi, WriteChannels,
+    AddressMode, Link, LogLevel, Message, Reply, Request, Response, SetAddress, SetLabel, SetWifi,
+    WriteChannels,
 };
 use itch_firmware::board::{Chip, RevA};
 use itch_firmware::serve::Clock;
@@ -399,6 +400,17 @@ impl NorFlash for FlashPort {
     }
 }
 
+/// An address configuration as `SetAddress` and `GetStatus` carry it:
+/// mode, address, prefix and gateway.
+pub type Addressing = (AddressMode, [u8; 4], u8, [u8; 4]);
+
+/// DHCP: every field zero.
+pub const DHCP: Addressing = (AddressMode::Dhcp, [0; 4], 0, [0; 4]);
+
+/// A made-up static address from the documentation range:
+/// `192.0.2.10/24` through `192.0.2.1`.
+pub const STATIC: Addressing = (AddressMode::Static, [192, 0, 2, 10], 24, [192, 0, 2, 1]);
+
 pub type FakeRevA = RevA<Bus, ResetLine<'static, ResetPin>, Led, NoDelay, FlashPort>;
 
 /// The bench's log selection. Nothing here reads its Log Events.
@@ -508,6 +520,29 @@ impl Bench {
             Reply::SetWifi => (),
             reply => panic!("not a SetWifi reply: {reply:?}"),
         })
+    }
+
+    /// Sets how the Rig takes its address through the Rig logic: `Ok`, or
+    /// the error code's name.
+    pub fn set_address(&mut self, addressing: Addressing) -> Result<(), String> {
+        let (mode, address, prefix, gateway) = addressing;
+        let request =
+            Request::SetAddress(SetAddress { holder: "", mode, address, prefix, gateway });
+        self.request(request, |reply| match reply {
+            Reply::SetAddress => (),
+            reply => panic!("not a SetAddress reply: {reply:?}"),
+        })
+    }
+
+    /// The address configuration `GetStatus` reports.
+    pub fn addressing(&mut self) -> Addressing {
+        self.request(Request::GetStatus, |reply| match reply {
+            Reply::GetStatus(status) => {
+                (status.mode, status.address, status.prefix, status.gateway)
+            }
+            reply => panic!("not a GetStatus reply: {reply:?}"),
+        })
+        .expect("GetStatus succeeds")
     }
 
     /// The network `GetStatus` reports credentials for. `None` = none.
