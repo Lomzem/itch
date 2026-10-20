@@ -15,6 +15,11 @@ Read `docs/agents/triage-labels.md` before assigning triage status.
 Use a single-context layout.
 Read `docs/agents/domain.md` before exploring the codebase.
 
+## Repository split
+
+This repo owns the firmware, simulator and protocol. The Python client lives in [Lomzem/itch-py](https://github.com/Lomzem/itch-py), usually checked out alongside it.
+Before changing the protocol, coordinating work across repos, or handling CI or releases, read [project context](docs/agents/project.md).
+
 ## Public repo
 
 `github.com/Lomzem/itch` is public. AJA-internal material (schematics, real DUT Profiles, AJA product names, SSIDs) lives only in gitignored paths: `.scratch/` and `docs/hardware/schematics/`. Examples, docs and tests use a made-up DUT.
