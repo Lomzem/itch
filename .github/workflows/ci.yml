@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+      - run: rustup default stable
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  core-no-std:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install stable --profile minimal --target thumbv7em-none-eabihf
+      - run: rustup default stable
+      # Any bare-metal target proves itch-core needs no std.
+      - run: cargo build -p itch-core --target thumbv7em-none-eabihf
+
+  firmware:
+    runs-on: ubuntu-24.04
+    env:
+      # espup queries the GitHub API; unauthenticated calls hit rate limits.
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: esp-rs/xtensa-toolchain@v1.7.0
+        with:
+          buildtargets: esp32s3
+          version: "1.97.0.0"
+      - run: cargo +esp clippy-firmware
+      - run: cargo +esp build-firmware
+      # A development build only has to compile here: the credentials are fake.
+      - run: cargo +esp clippy-firmware-wifi
+        env:
+          ITCH_WIFI_SSID: itch-ci
+          ITCH_WIFI_PASSWORD: not-a-real-password
+      - run: cargo +esp build-firmware-wifi
+        env:
+          ITCH_WIFI_SSID: itch-ci
+          ITCH_WIFI_PASSWORD: not-a-real-password

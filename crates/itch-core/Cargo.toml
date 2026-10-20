@@ -1,0 +1,12 @@
+[package]
+name = "itch-core"
+description = "Hardware-free core of the itch Rig: TAFP framing, the wire codec and Rig logic."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+log.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

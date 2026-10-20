@@ -1,0 +1,410 @@
+//! Rev A board support: every chip and board specific lives here. Above
+//! this module Channels are canonical, bit 0 = CH1.
+
+use embedded_hal::delay::DelayNs;
+use embedded_hal::digital::OutputPin;
+use embedded_hal::i2c::I2c;
+use embedded_storage::nor_flash::NorFlash;
+use itch_core::board::{Board, BoardInfo, Counters, HwFault, StorageFault};
+use itch_core::label::Label;
+use itch_core::wire::FEATURE_WIFI;
+
+use crate::settings::Settings;
+
+/// The MCP23017's I2C address: A0-A2 are tied to GND.
+const EXPANDER: u8 = 0x20;
+
+/// MCP23017 registers in the power-on BANK = 0 layout. Each A register is
+/// followed by its B register, so one write sets both ports.
+const IODIRA: u8 = 0x00;
+const OLATA: u8 = 0x14;
+
+/// What `Hello` reports in `features`: a `wifi` build is a development build.
+const FEATURES: u8 = if cfg!(feature = "wifi") { FEATURE_WIFI } else { 0 };
+
+#[derive(Clone, Copy)]
+enum Port {
+    A,
+    B,
+}
+
+/// The expander pin behind each Channel, CH1 first. The board wires them in
+/// reverse: CH1-8 = GPB7..GPB0, CH9-16 = GPA7..GPA0.
+const CHANNELS: [(Port, u8); 16] = [
+    (Port::B, 7),
+    (Port::B, 6),
+    (Port::B, 5),
+    (Port::B, 4),
+    (Port::B, 3),
+    (Port::B, 2),
+    (Port::B, 1),
+    (Port::B, 0),
+    (Port::A, 7),
+    (Port::A, 6),
+    (Port::A, 5),
+    (Port::A, 4),
+    (Port::A, 3),
+    (Port::A, 2),
+    (Port::A, 1),
+    (Port::A, 0),
+];
+
+/// What the board reports from the chip and the rest of the firmware.
+#[derive(Debug, Clone, Copy)]
+pub struct Chip {
+    /// The factory MAC address.
+    pub hardware_id: [u8; 6],
+    /// The raw `SocResetReason` of this boot, or 0 if unknown.
+    pub reset_reason: u8,
+    /// Where the previous boot panicked. Empty = it didn't.
+    pub last_panic: &'static str,
+    /// Milliseconds since boot.
+    pub now: fn() -> u64,
+    /// The counters the transports keep.
+    pub counters: fn() -> Counters,
+}
+
+/// The Rev A board: an MCP23017 on I2C driving the 16 Channels, with its
+/// RESET on a GPIO, the status LED, and the settings in flash.
+pub struct RevA<I2C, RESET, LED, DELAY, FLASH: NorFlash> {
+    i2c: I2C,
+    reset: RESET,
+    led: LED,
+    delay: DELAY,
+    info: BoardInfo,
+    chip: Chip,
+    /// The Channels last driven, bit 0 = CH1.
+    channels: u16,
+    /// The last expander operation failed.
+    faulted: bool,
+    /// Where a fault blink is: lit or not.
+    blink: bool,
+    settings: Settings<FLASH>,
+}
+
+impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash>
+    RevA<I2C, RESET, LED, DELAY, FLASH>
+{
+    /// Takes over a board whose expander RESET is already driven low.
+    pub fn new(i2c: I2C, reset: RESET, led: LED, delay: DELAY, flash: FLASH, chip: Chip) -> Self {
+        let info = BoardInfo {
+            hardware_id: chip.hardware_id,
+            firmware_version: env!("CARGO_PKG_VERSION"),
+            dirty: env!("ITCH_DIRTY") == "true",
+            features: FEATURES,
+            board_revision: "A",
+            reset_reason: chip.reset_reason,
+            last_panic: chip.last_panic,
+        };
+        Self {
+            i2c,
+            reset,
+            led,
+            delay,
+            info,
+            chip,
+            channels: 0,
+            faulted: false,
+            blink: false,
+            settings: Settings::new(flash, chip.now),
+        }
+    }
+
+    /// Runs on every idle tick: blinks the status LED, once per tick, while
+    /// the expander is faulted.
+    pub fn tick(&mut self) {
+        self.blink = !self.blink;
+        self.show_status();
+    }
+
+    /// The status LED is on while any Channel is on, and blinks while the
+    /// expander is faulted.
+    fn show_status(&mut self) {
+        let lit = if self.faulted { self.blink } else { self.channels != 0 };
+        let _ = self.led.set_state(lit.into());
+    }
+
+    /// Pulses RESET, sets every latch low and then every pin to an output,
+    /// and reads the configuration back.
+    fn bring_up(&mut self) -> Result<(), HwFault> {
+        let _ = self.reset.set_low();
+        // The MCP23017 needs a RESET pulse of at least 1 µs.
+        self.delay.delay_us(10);
+        let _ = self.reset.set_high();
+        self.delay.delay_us(10);
+        self.write_pair(OLATA, [0x00, 0x00])?;
+        self.write_pair(IODIRA, [0x00, 0x00])?;
+        if self.read_pair(IODIRA)? != [0x00, 0x00] {
+            return Err(HwFault);
+        }
+        Ok(())
+    }
+
+    /// The Channels the expander drives. Pins that are no longer outputs
+    /// mean it lost its configuration, which is a fault.
+    fn driven(&mut self) -> Result<u16, HwFault> {
+        if self.read_pair(IODIRA)? != [0x00, 0x00] {
+            return Err(HwFault);
+        }
+        Ok(channels(self.read_pair(OLATA)?))
+    }
+
+    /// Writes an A register and the B register after it.
+    fn write_pair(&mut self, register: u8, [a, b]: [u8; 2]) -> Result<(), HwFault> {
+        self.i2c.write(EXPANDER, &[register, a, b]).map_err(|_| HwFault)
+    }
+
+    /// Reads an A register and the B register after it.
+    fn read_pair(&mut self, register: u8) -> Result<[u8; 2], HwFault> {
+        let mut pair = [0; 2];
+        self.i2c.write_read(EXPANDER, &[register], &mut pair).map_err(|_| HwFault)?;
+        Ok(pair)
+    }
+}
+
+impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash> Board
+    for RevA<I2C, RESET, LED, DELAY, FLASH>
+{
+    fn info(&self) -> BoardInfo {
+        self.info
+    }
+
+    fn write_channels(&mut self, state: u16) -> Result<(), HwFault> {
+        let result = self.write_pair(OLATA, ports(state));
+        if result.is_ok() {
+            self.channels = state;
+        }
+        self.faulted = result.is_err();
+        self.show_status();
+        result
+    }
+
+    fn read_channels(&mut self) -> Result<u16, HwFault> {
+        let result = self.driven();
+        self.faulted = result.is_err();
+        self.show_status();
+        result
+    }
+
+    /// Clears the latches before the pins become outputs, so no contact
+    /// closes on the way. If the expander doesn't come up, it is held in
+    /// reset, which keeps every contact open.
+    fn reinit(&mut self) -> Result<(), HwFault> {
+        self.channels = 0;
+        let result = self.bring_up();
+        if result.is_err() {
+            let _ = self.reset.set_low();
+        }
+        self.faulted = result.is_err();
+        self.show_status();
+        result
+    }
+
+    fn hold_in_reset(&mut self) {
+        let _ = self.reset.set_low();
+        self.channels = 0;
+        self.faulted = true;
+        self.show_status();
+    }
+
+    fn now(&self) -> u64 {
+        (self.chip.now)()
+    }
+
+    fn counters(&self) -> Counters {
+        (self.chip.counters)()
+    }
+
+    fn load_label(&mut self) -> Option<Label> {
+        self.settings.load()
+    }
+
+    fn save_label(&mut self, label: &str) -> Result<(), StorageFault> {
+        self.settings.save(&Label::new(label).ok_or(StorageFault)?)
+    }
+}
+
+/// Maps a canonical Channel state onto the expander's `[GPA, GPB]` pins.
+fn ports(state: u16) -> [u8; 2] {
+    let mut ports = [0; 2];
+    for (channel, &(port, pin)) in CHANNELS.iter().enumerate() {
+        if state & 1 << channel != 0 {
+            ports[port as usize] |= 1 << pin;
+        }
+    }
+    ports
+}
+
+/// Maps the expander's `[GPA, GPB]` pins back onto a canonical Channel state.
+fn channels(ports: [u8; 2]) -> u16 {
+    let mut state = 0;
+    for (channel, &(port, pin)) in CHANNELS.iter().enumerate() {
+        if ports[port as usize] & 1 << pin != 0 {
+            state |= 1 << channel;
+        }
+    }
+    state
+}
+
+#[cfg(feature = "firmware")]
+pub use esp32s3::{Parts, RealBoard, UsbRx, UsbTx, boot, force_reset_low, record_panic};
+
+/// The ESP32-S3 side of the board: pins, peripherals and boot.
+#[cfg(feature = "firmware")]
+mod esp32s3 {
+    use core::panic::Location;
+    use core::sync::atomic::{AtomicU32, Ordering};
+
+    use esp_hal::delay::Delay;
+    use esp_hal::gpio::{Level, Output, OutputConfig};
+    use esp_hal::i2c::master::{Config, I2c, SoftwareTimeout};
+    use esp_hal::peripherals::{GPIO, GPIO6};
+    use esp_hal::rtc_cntl::{Rtc, Rwdt, RwdtStage, RwdtStageAction};
+    use esp_hal::time::Duration;
+    use esp_hal::timer::timg::TimerGroup;
+    use esp_hal::usb::usb_serial_jtag::{UsbSerialJtag, UsbSerialJtagRx, UsbSerialJtagTx};
+    use esp_hal::{Async, Blocking};
+    use esp_storage::FlashStorage;
+    use itch_core::board::Counters;
+    use static_cell::StaticCell;
+
+    use super::{Chip, RevA};
+    use crate::crash::{self, RECORD_LEN, Record};
+    use crate::supervisor::{self, ResetLine};
+    use crate::{logger, queue, usb};
+
+    /// The expander's RESET is GPIO6, pulled low on the board.
+    const RESET_GPIO: u8 = 6;
+
+    /// The longest one I2C transaction may take before it fails. esp-hal
+    /// sets no timeout by default.
+    const I2C_TIMEOUT: Duration = Duration::from_millis(10);
+
+    /// How long the RTC watchdog waits for a feed before it resets the whole
+    /// chip. Only the supervisor and `rig`'s check-ins in time feed it.
+    const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(2);
+
+    /// The crash record a panic leaves for the next boot. RTC RAM keeps it
+    /// through the reset; power-on zeroes it.
+    #[esp_hal::ram(unstable(rtc_fast, persistent))]
+    static mut CRASH: Record = [0; RECORD_LEN];
+
+    /// The previous boot's crash record, for this boot's `last_panic`.
+    static LAST_CRASH: StaticCell<Record> = StaticCell::new();
+
+    pub type RealBoard = RevA<
+        I2c<'static, Blocking>,
+        ResetLine<'static, Output<'static>>,
+        Output<'static>,
+        Delay,
+        FlashStorage<'static>,
+    >;
+    pub type UsbRx = UsbSerialJtagRx<'static, Async>;
+    pub type UsbTx = UsbSerialJtagTx<'static, Async>;
+
+    /// What the firmware runs on once the chip is up.
+    pub struct Parts {
+        /// The board, with the expander still held in reset.
+        pub board: RealBoard,
+        /// The armed RTC watchdog, for the supervisor.
+        pub watchdog: Rwdt,
+        /// USB Serial/JTAG, which keeps espflash's auto-reset on the same cable.
+        pub usb_rx: UsbRx,
+        pub usb_tx: UsbTx,
+        /// The radio, for the development-only WiFi transport.
+        #[cfg(feature = "wifi")]
+        pub wifi: esp_hal::peripherals::WIFI<'static>,
+    }
+
+    /// Boots the chip. The expander RESET is driven low before anything
+    /// else, so every contact stays open until the expander is brought up.
+    /// Then the RTC watchdog is armed: from here on the supervisor must
+    /// feed it.
+    pub fn boot() -> Parts {
+        // A plain GPIO with no pad hold. This Output is GPIO6's only owner:
+        // nothing may use `GPIO6` from the peripherals below.
+        let reset = Output::new(unsafe { GPIO6::steal() }, Level::Low, OutputConfig::default());
+        let p = esp_hal::init(esp_hal::Config::default());
+
+        let mut watchdog = Rtc::new(p.RTC_TIMER).rwdt;
+        watchdog.set_timeout(RwdtStage::Stage0, WATCHDOG_TIMEOUT);
+        watchdog.enable();
+        // `enable` resets the stage actions.
+        watchdog.set_stage_action(RwdtStage::Stage0, RwdtStageAction::ResetSystem);
+        watchdog.feed();
+
+        let reset_reason = esp_hal::system::reset_reason().map_or(0, |reason| reason as u8);
+        let last_panic = crash::location(take_crash()).unwrap_or("");
+
+        esp_rtos::start(TimerGroup::new(p.TIMG0).timer0, p.FROM_CPU_INTR0);
+
+        let config =
+            Config::default().with_software_timeout(SoftwareTimeout::Transaction(I2C_TIMEOUT));
+        let i2c = I2c::new(p.I2C0, config)
+            .expect("a valid I2C config")
+            .with_sda(p.GPIO5)
+            .with_scl(p.GPIO4);
+        let led = Output::new(p.GPIO15, Level::Low, OutputConfig::default());
+        let chip = Chip {
+            hardware_id: esp_hal::efuse::base_mac_address()
+                .as_bytes()
+                .try_into()
+                .expect("a 6-byte MAC address"),
+            reset_reason,
+            last_panic,
+            now: || embassy_time::Instant::now().as_millis(),
+            counters,
+        };
+        let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
+        let reset = ResetLine::new(reset, &supervisor::TRIPPED);
+        let flash = FlashStorage::new(p.FLASH);
+        let board = RevA::new(i2c, reset, led, Delay::new(), flash, chip);
+        Parts {
+            board,
+            watchdog,
+            usb_rx,
+            usb_tx,
+            #[cfg(feature = "wifi")]
+            wifi: p.WIFI,
+        }
+    }
+
+    /// Takes the crash record the previous boot left, clearing it so it is
+    /// reported for one boot only.
+    fn take_crash() -> &'static Record {
+        let crash = &raw mut CRASH;
+        // SAFETY: only boot, once, and the panic handler touch `CRASH`.
+        let record = unsafe { crash.read_volatile() };
+        unsafe { crash.write_volatile([0; RECORD_LEN]) };
+        LAST_CRASH.init(record)
+    }
+
+    /// Leaves where a panic happened for the next boot. Byte by byte, so
+    /// the marker at the end goes last.
+    pub fn record_panic(location: Option<&Location>) {
+        let (file, line, column) =
+            location.map_or(("", 0, 0), |at| (at.file(), at.line(), at.column()));
+        let record = crash::record(file, line, column);
+        let crash = (&raw mut CRASH).cast::<u8>();
+        for (at, &byte) in record.iter().enumerate() {
+            // SAFETY: within `CRASH`, and nothing else runs during a panic.
+            unsafe { crash.add(at).write_volatile(byte) };
+        }
+    }
+
+    fn counters() -> Counters {
+        let load = |counter: &AtomicU32| counter.load(Ordering::Relaxed);
+        Counters {
+            crc_failures: load(&queue::CRC_FAILURES),
+            oversized_frames: load(&queue::OVERSIZED_FRAMES),
+            dropped_logs: load(&logger::DROPPED_LOGS),
+            usb_tx_dropped: load(&usb::TX_DROPPED),
+        }
+    }
+
+    /// Drives the expander RESET low straight through the GPIO registers,
+    /// for the panic path, which may run while its owner is mid-call.
+    pub fn force_reset_low() {
+        GPIO::regs().out_w1tc().write(|w| unsafe { w.bits(1 << RESET_GPIO) });
+    }
+}

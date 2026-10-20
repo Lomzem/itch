@@ -1,0 +1,61 @@
+[package]
+name = "itch-firmware"
+description = "The itch Rig firmware for the ESP32-S3: board support, the USB transport and the development-only WiFi transport."
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "itch-firmware"
+path = "src/main.rs"
+required-features = ["firmware"]
+test = false
+bench = false
+
+[features]
+# Builds the firmware for the Rig. Without it only the chip-independent
+# modules build, so host `cargo test` covers them.
+firmware = [
+    "dep:embassy-executor",
+    "dep:embassy-sync",
+    "dep:embassy-time",
+    "dep:embedded-io-async",
+    "dep:esp-bootloader-esp-idf",
+    "dep:esp-hal",
+    "dep:esp-rtos",
+    "dep:esp-storage",
+    "dep:log",
+    "dep:static_cell",
+]
+# Development builds only (ADR 0003): adds WiFi and a TCP listener. Set
+# ITCH_WIFI_SSID and ITCH_WIFI_PASSWORD (WPA2) when building.
+wifi = [
+    "firmware",
+    "dep:embassy-net",
+    "dep:esp-alloc",
+    "dep:esp-radio",
+    "esp-rtos/esp-alloc",
+    "esp-rtos/esp-radio",
+]
+
+[dependencies]
+embassy-embedded-hal = { version = "=0.6.0", default-features = false }
+embassy-futures = "=0.1.2"
+embedded-hal = "1.0.0"
+embedded-storage = "0.3.1"
+itch-core.workspace = true
+sequential-storage = { version = "=8.0.2", default-features = false }
+
+embassy-executor = { version = "=0.10.0", optional = true }
+embassy-net = { version = "=0.9.1", default-features = false, features = ["dhcpv4", "medium-ethernet", "tcp"], optional = true }
+embassy-sync = { version = "=0.8.0", optional = true }
+embassy-time = { version = "=0.5.1", optional = true }
+embedded-io-async = { version = "=0.7.0", optional = true }
+esp-alloc = { version = "=0.11.0", features = ["esp32s3"], optional = true }
+esp-bootloader-esp-idf = { version = "=0.6.0", features = ["esp32s3"], optional = true }
+esp-hal = { version = "=1.2.2", features = ["esp32s3", "unstable"], optional = true }
+esp-radio = { version = "=1.0.0-beta.1", features = ["esp32s3", "esp-alloc", "wifi"], optional = true }
+esp-rtos = { version = "=0.4.0", features = ["esp32s3", "embassy"], optional = true }
+esp-storage = { version = "=0.10.0", features = ["esp32s3", "embedded-storage"], optional = true }
+log = { workspace = true, optional = true }
+static_cell = { version = "=2.1.1", optional = true }

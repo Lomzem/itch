@@ -42,7 +42,11 @@ _Avoid_: partial set, masked set
 
 **Lease**:
 Exclusive permission for one client to change a Rig's Channels, which lapses unless the holder keeps it alive.
-_Avoid_: lock, session, ownership
+_Avoid_: lock, ownership
+
+**Session**:
+The part of a script during which it holds a Rig's Lease; the term QA use, so scripts need not deal with the Lease directly.
+_Avoid_: connection, transaction
 
 **Holder**:
 The client currently owning a Rig's Lease, identified by a human-readable description (user, host, script).
@@ -73,5 +77,13 @@ One named setting within a Profile (e.g. `resolution`), occupying a fixed set of
 _Avoid_: parameter, option
 
 **Value**:
-One named state of a Field (e.g. `1080p`), corresponding to a specific on/off pattern on that Field's Channels.
+One named state of a Field (e.g. `1080p`), corresponding to one or more Encodings on that Field's Channels.
 _Avoid_: preset, mode
+
+**Encoding**:
+One on/off pattern of a Field's Channels that selects a Value; a Value with several Encodings numbers them from 1, and Encoding 1 is its default.
+_Avoid_: pattern, variant, representation
+
+**Alias**:
+Another name for an existing Value of the same Field.
+_Avoid_: synonym
