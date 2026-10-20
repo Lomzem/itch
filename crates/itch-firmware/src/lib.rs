@@ -9,7 +9,7 @@ pub mod board;
 pub mod crash;
 #[cfg(feature = "firmware")]
 pub mod logger;
-pub mod queue;
+pub mod mailbox;
 pub mod settings;
 pub mod supervisor;
 #[cfg(feature = "wifi")]

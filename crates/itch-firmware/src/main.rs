@@ -13,7 +13,7 @@ use itch_core::board::Board;
 use itch_core::frame::MAX_PAYLOAD;
 use itch_core::rig::{Handled, Rig, SETTLE_MS};
 use itch_firmware::board::{self, RealBoard};
-use itch_firmware::queue::{self, Payload, Transport};
+use itch_firmware::mailbox::{Payload, REQUESTS};
 use itch_firmware::{logger, supervisor, usb};
 use static_cell::StaticCell;
 
@@ -64,7 +64,7 @@ async fn rig(mut rig: Rig, mut board: RealBoard) {
     let mut reply = [0; MAX_PAYLOAD];
     loop {
         // The tick goes first, so a stream of requests can't starve it.
-        let request = match select(ticker.next(), queue::REQUESTS.receive()).await {
+        let request = match select(ticker.next(), REQUESTS.receive()).await {
             Either::First(()) => {
                 rig.tick(&mut board);
                 board.tick();
@@ -75,22 +75,14 @@ async fn rig(mut rig: Rig, mut board: RealBoard) {
         };
         let frame = request.frame.as_ref().map(Payload::as_bytes).map_err(|&error| error);
         let Handled::Reply { len, settle } =
-            rig.receive(frame, &mut board, &request.transport, &mut reply)
+            rig.receive(frame, &mut board, &request.from, &mut reply)
         else {
             continue;
         };
         if settle {
             Timer::after_millis(SETTLE_MS).await;
         }
-        send_reply(request.transport, Payload::new(&reply[..len])).await;
-    }
-}
-
-async fn send_reply(transport: Transport, reply: Payload) {
-    match transport {
-        Transport::Usb => usb::REPLIES.send(reply).await,
-        #[cfg(feature = "wifi")]
-        Transport::Tcp(connection) => itch_firmware::tcp::reply(connection, reply).await,
+        request.from.reply(Payload::new(&reply[..len])).await;
     }
 }
 
