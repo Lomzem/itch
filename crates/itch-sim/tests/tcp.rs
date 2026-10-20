@@ -1,5 +1,5 @@
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
-use std::net::{Shutdown, TcpStream};
+use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -436,7 +436,12 @@ impl Sim {
     }
 
     fn connect(&self) -> TcpStream {
-        let stream = TcpStream::connect(self.url.strip_prefix("tcp://").unwrap()).unwrap();
+        let mut addr: SocketAddr = self.url.strip_prefix("tcp://").unwrap().parse().unwrap();
+        // Windows refuses to connect to 0.0.0.0, which other systems take as this host.
+        if addr.ip().is_unspecified() {
+            addr.set_ip(Ipv4Addr::LOCALHOST.into());
+        }
+        let stream = TcpStream::connect(addr).unwrap();
         stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
         stream
     }
