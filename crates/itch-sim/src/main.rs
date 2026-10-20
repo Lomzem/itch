@@ -31,7 +31,8 @@ any more straight away.
 The label, Wi-Fi credentials and address configuration live in memory, so
 every run starts with the default label, no credentials and DHCP. With
 credentials, `GetStatus` reports the Wi-Fi link connected at the static
-address if one is set, otherwise at the address the sim listens on.";
+address if one is set, otherwise at the address the sim listens on, or
+joining if that is 0.0.0.0 or IPv6.";
 
 /// The most connections served at once, as by a Rig over Wi-Fi.
 const MAX_CONNECTIONS: usize = 4;

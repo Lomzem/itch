@@ -96,12 +96,25 @@ fn the_rig_reports_the_credentials_stored_at_boot() {
 #[test]
 fn status_reports_the_link_and_address_the_board_has() {
     let mut rig = TestRig::new();
+    rig.ok(set_wifi(SSID, PASSPHRASE));
     let status_now = status(&mut rig);
     assert_eq!((status_now.link, status_now.current_address), (Link::Off, [0; 4]));
 
     rig.board.network = Network { link: Link::Connected, address: [192, 0, 2, 10] };
     let status_now = status(&mut rig);
     assert_eq!((status_now.link, status_now.current_address), (Link::Connected, [192, 0, 2, 10]));
+}
+
+/// The radio stays on its network a moment after the credentials are
+/// cleared, so the reply goes out first; status already reports it off.
+#[test]
+fn status_reports_the_link_off_once_the_credentials_are_cleared() {
+    let mut rig = TestRig::new();
+    rig.ok(set_wifi(SSID, PASSPHRASE));
+    rig.board.network = Network { link: Link::Connected, address: [192, 0, 2, 10] };
+    rig.ok(set_wifi("", ""));
+    let status_now = status(&mut rig);
+    assert_eq!((status_now.link, status_now.current_address), (Link::Off, [0; 4]));
 }
 
 #[test]

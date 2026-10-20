@@ -207,7 +207,7 @@ Every case has a `name`, unique within its section.
 
 **`malformed`:** `{ "name", "payload", "error" }`. A strict decoder rejects `payload`, and `error` names how:
 
-- `"Malformed"`: the payload breaks its byte table (too short, bytes left over, a bad `bool` or enum, invalid UTF-8, over-long text, a field out of its range such as an empty Holder in `Lock`), or is an ok reply to an unknown request type.
+- `"Malformed"`: the payload breaks its byte table (too short, bytes left over, a bad `bool` or enum, invalid UTF-8, over-long text, a field out of its range such as an empty Holder in `Lock`, or fields that contradict each other such as a `GetStatus` reply connected with a zero `current_address`), or is an ok reply to an unknown request type.
 - `"UnknownRequest"`: a request whose `type` names no request.
 
 A client rejects every case. A Rig, given a request case (`type` below `0x40`), answers with `error` as its `status` and the payload's `request_id` echoed, except that a payload under 5 bytes gets no reply and is counted in `malformed_frames`.

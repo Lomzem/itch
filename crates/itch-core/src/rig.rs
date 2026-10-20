@@ -1,4 +1,4 @@
-use crate::board::{Board, StorageFault};
+use crate::board::{Board, Network, StorageFault};
 use crate::frame::{FrameError, MAX_PAYLOAD};
 use crate::holder::Holder;
 use crate::label::Label;
@@ -167,7 +167,12 @@ impl Rig {
             Request::GetStatus => {
                 let info = board.info();
                 let counters = board.counters();
-                let network = board.network();
+                // Without credentials the link is off, even while the radio
+                // takes a moment to leave the network it was on.
+                let network = match self.wifi {
+                    Some(_) => board.network(),
+                    None => Network::default(),
+                };
                 Reply::GetStatus(StatusReply {
                     uptime_ms: board.now(),
                     reset_reason: info.reset_reason,

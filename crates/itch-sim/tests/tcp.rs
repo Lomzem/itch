@@ -273,6 +273,16 @@ fn wifi_credentials_last_for_the_run_and_connect_at_the_bound_address() {
     assert_eq!(network(&mut sim.connect()), off);
 }
 
+/// Bound to every address, the sim has no one address to report, so it is
+/// like a Rig still waiting for its DHCP lease.
+#[test]
+fn a_sim_bound_to_no_one_address_reports_joining_with_dhcp() {
+    let sim = Sim::start_with(&["--bind", "0.0.0.0:0"]);
+    let set = set_wifi("", SSID, "example-passphrase");
+    assert_eq!(exchange(&mut sim.connect(), 1, set), Response::Ok(Reply::SetWifi));
+    assert_eq!(network(&mut sim.connect()), (true, SSID, Link::Joining, [0; 4]));
+}
+
 #[test]
 fn wifi_credentials_out_of_range_are_malformed() {
     let sim = Sim::start();

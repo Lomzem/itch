@@ -859,6 +859,71 @@
       "error": "Malformed"
     },
     {
+      "name": "get-status-ok-dhcp-with-address",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 c0 00 02 0a 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-dhcp-with-prefix",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 18 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-dhcp-with-gateway",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 c0 00 02 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-static-zero-address",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00 18 c0 00 02 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-static-prefix-over-32",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 c0 00 02 0a 21 c0 00 02 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-static-multicast-address",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 e0 00 00 01 18 c0 00 02 01",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-static-broadcast-gateway",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 c0 00 02 0a 18 ff ff ff ff",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-wifi-configured-without-ssid",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-ssid-without-wifi-configured",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-joining-without-wifi-configured",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-off-with-current-address",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74 00 c0 00 02 0a 00 00 00 00 00 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-joining-with-current-address",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74 01 c0 00 02 0a 00 00 00 00 00 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
+      "name": "get-status-ok-connected-without-current-address",
+      "payload": "85 78 56 34 12 00 fa 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 0d 45 78 61 6d 70 6c 65 52 69 67 4e 65 74 02 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+      "error": "Malformed"
+    },
+    {
       "name": "log-event-level-off",
       "payload": "40 00 00 00 00 00 61",
       "error": "Malformed"

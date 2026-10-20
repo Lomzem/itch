@@ -2,7 +2,9 @@ mod common;
 
 use common::{FakeBoard, TestRig};
 use itch_core::board::Network;
-use itch_core::wire::{AddressMode, ErrorCode, Link, Reply, Request, SetAddress, StatusReply};
+use itch_core::wire::{
+    AddressMode, ErrorCode, Link, Reply, Request, SetAddress, SetWifi, StatusReply,
+};
 
 /// Made-up addresses from the documentation range.
 const ADDRESS: [u8; 4] = [192, 0, 2, 10];
@@ -115,6 +117,11 @@ fn the_rig_reports_the_configuration_stored_at_boot() {
 #[test]
 fn status_reports_the_configured_address_beside_the_one_the_rig_has() {
     let mut rig = TestRig::new();
+    rig.ok(Request::SetWifi(SetWifi {
+        holder: "",
+        ssid: "ExampleRigNet",
+        passphrase: "example-passphrase",
+    }));
     rig.ok(set_static(ADDRESS, 24, GATEWAY));
     assert_eq!(status(&mut rig).current_address, [0; 4]);
 
