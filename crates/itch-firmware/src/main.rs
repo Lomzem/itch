@@ -7,7 +7,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use embassy_futures::select::{Either, select};
-use embassy_time::{Duration, Ticker, Timer};
+use embassy_time::{Duration, Ticker, Timer, with_timeout};
 use esp_rtos::embassy::Executor;
 use itch_core::board::Board;
 use itch_core::frame::MAX_PAYLOAD;
@@ -21,6 +21,9 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 /// How often the `rig` task does its idle work.
 const TICK: Duration = Duration::from_millis(50);
+
+/// How long a reply may wait for room in its transport's mailbox.
+const REPLY_TIMEOUT: Duration = Duration::from_millis(100);
 
 static EXECUTOR: StaticCell<Executor> = StaticCell::new();
 
@@ -81,7 +84,10 @@ async fn rig(mut rig: Rig, mut board: RealBoard) {
         if settle {
             Timer::after_millis(SETTLE_MS).await;
         }
-        request.from.reply(Payload::new(&reply[..len])).await;
+        // A client flooding requests fills the replies with `Busy`, which
+        // could keep this reply waiting for room until `rig` misses its
+        // deadline: drop it instead, and the client retries.
+        let _ = with_timeout(REPLY_TIMEOUT, request.from.reply(Payload::new(&reply[..len]))).await;
     }
 }
 

@@ -19,7 +19,7 @@ pub struct TestRig {
     pub rig: Rig,
     pub board: FakeBoard,
     pub connection: TestConnection,
-    /// Whether the Rig had the last reply wait out relay settling.
+    /// Whether the Rig had the last reply wait for the contacts to settle.
     pub settle: bool,
 }
 

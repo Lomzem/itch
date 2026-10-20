@@ -71,26 +71,23 @@ fn a_reply_waiting_for_room_is_dropped_when_its_connection_ends() {
     assert_eq!(next(mailbox), None);
 }
 
+/// A request that finds the queue full is answered `Busy` at once, unless
+/// it has no `request_id` to answer by.
 #[test]
 fn a_request_that_finds_the_queue_full_is_answered_busy() {
-    let (mailbox, requests) = mailbox();
-    let origin = mailbox.connect();
-    for _ in 0..DEPTH {
-        origin.receive(Ok(&[0x01, 0, 0, 0, 0]));
+    // GetChannels, request_id 0x12345678, and the same cut short.
+    let cases: [(&[u8], _); 2] = [
+        (&[0x02, 0x78, 0x56, 0x34, 0x12], Some(vec![0x82, 0x78, 0x56, 0x34, 0x12, 0x07, 0x00])),
+        (&[0x02, 0x78, 0x56, 0x34], None),
+    ];
+    for (request, busy) in cases {
+        let (mailbox, requests) = mailbox();
+        let origin = mailbox.connect();
+        for _ in 0..DEPTH {
+            origin.receive(Ok(&[0x01, 0, 0, 0, 0]));
+        }
+        origin.receive(Ok(request));
+        assert_eq!(next(mailbox), busy, "{request:02x?}");
+        assert_eq!(requests.len(), DEPTH);
     }
-    // GetChannels, request_id 0x12345678.
-    origin.receive(Ok(&[0x02, 0x78, 0x56, 0x34, 0x12]));
-    assert_eq!(next(mailbox), Some(vec![0x82, 0x78, 0x56, 0x34, 0x12, 0x07, 0x00]));
-    assert_eq!(requests.len(), DEPTH);
-}
-
-#[test]
-fn a_payload_without_a_request_id_gets_no_busy_reply() {
-    let (mailbox, _) = mailbox();
-    let origin = mailbox.connect();
-    for _ in 0..DEPTH {
-        origin.receive(Ok(&[0x01, 0, 0, 0, 0]));
-    }
-    origin.receive(Ok(&[0x02, 0x78, 0x56, 0x34]));
-    assert_eq!(next(mailbox), None);
 }

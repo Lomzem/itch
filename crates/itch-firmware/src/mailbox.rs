@@ -111,9 +111,12 @@ pub struct Origin {
 }
 
 impl Origin {
-    /// Queues a frame the transport decoded, payload or error, for the Rig.
-    /// A request that finds the queue full is answered `Busy` at once; a
-    /// dropped frame that finds it full goes uncounted.
+    /// Queues a frame the transport decoded, payload or error, for the Rig,
+    /// which counts the errors. A request that finds the queue full is
+    /// answered `Busy` at once. An error takes a place in the queue too, and
+    /// one that finds it full goes uncounted: corrupt frames come singly, as
+    /// from a client joining mid-stream, so neither costs a request (ADR
+    /// 0004).
     pub fn receive(self, frame: Result<&[u8], FrameError>) {
         let request = Queued { from: self, frame: frame.map(Payload::new) };
         if let Err(TrySendError::Full(request)) = self.mailbox.requests.try_send(request)
@@ -126,8 +129,7 @@ impl Origin {
     }
 
     /// Queues `reply` once there is room, or drops it once the connection
-    /// has ended. The writer drains replies within its write timeout, so
-    /// this never stalls the `rig` task for long.
+    /// has ended.
     pub async fn reply(self, mut reply: Payload) {
         let replies = &self.mailbox.replies;
         // Checked again after every wait: the connection may end meanwhile.

@@ -29,9 +29,9 @@ pub fn encode_frame(payload: &[u8], out: &mut [u8; MAX_FRAME]) -> usize {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameError {
     /// Bad CRC, truncated COBS or a length that disagrees with the payload.
-    /// The Rig counts it in `crc_failures`.
+    /// Reported in `crc_failures`.
     Corrupt,
-    /// Over [`MAX_PAYLOAD`]. The Rig counts it in `oversized_frames`.
+    /// Over [`MAX_PAYLOAD`]. Reported in `oversized_frames`.
     Oversized,
 }
 
