@@ -10,8 +10,11 @@ pub mod connections;
 pub mod crash;
 #[cfg(feature = "firmware")]
 pub mod logger;
+pub mod mdns;
 #[cfg(feature = "firmware")]
 pub mod radio;
+#[cfg(feature = "firmware")]
+pub mod responder;
 pub mod serve;
 pub mod settings;
 pub mod supervisor;

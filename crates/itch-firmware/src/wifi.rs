@@ -1,6 +1,6 @@
 //! Where the Wi-Fi Transport meets the board: the credentials the board
-//! hands the radio, and what the radio and the network stack report for
-//! `GetStatus`.
+//! hands the radio, the Label it hands the mDNS responder, and what the
+//! radio and the network stack report for `GetStatus` and mDNS.
 
 use core::cell::Cell;
 use core::fmt;
@@ -9,8 +9,14 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use itch_core::board::Network;
+use itch_core::label::Label;
 use itch_core::wifi::Credentials;
 use itch_core::wire::Link;
+
+use crate::mdns::Advertisement;
+
+/// The port clients connect to: `tcp://<address>:7878`.
+pub const PORT: u16 = 7878;
 
 /// The Rig's Wi-Fi.
 #[cfg(feature = "firmware")]
@@ -27,13 +33,17 @@ pub enum Radio {
     Joined,
 }
 
-/// The Rig's Wi-Fi: the credentials the radio joins with, and the link as
-/// the radio and the network stack report it.
+/// The Rig's Wi-Fi: the credentials the radio joins with, the Label mDNS
+/// advertises, and the link as the radio and the network stack report it.
 pub struct Wifi {
     /// The newest credentials the board handed over, until the radio takes
     /// them. `None` = none.
     credentials: Signal<CriticalSectionRawMutex, Option<Credentials>>,
     state: Mutex<CriticalSectionRawMutex, Cell<State>>,
+    /// The Label the board last handed over. `None` until it has.
+    label: Mutex<CriticalSectionRawMutex, Cell<Option<Label>>>,
+    /// Something mDNS advertises may have changed.
+    changed: Signal<CriticalSectionRawMutex, ()>,
 }
 
 #[derive(Clone, Copy)]
@@ -49,6 +59,8 @@ impl Wifi {
         Self {
             credentials: Signal::new(),
             state: Mutex::new(Cell::new(State { radio: Radio::Off, address: None })),
+            label: Mutex::new(Cell::new(None)),
+            changed: Signal::new(),
         }
     }
 
@@ -62,6 +74,32 @@ impl Wifi {
     /// over.
     pub async fn credentials(&self) -> Option<Credentials> {
         self.credentials.wait().await
+    }
+
+    /// Has mDNS advertise the Rig under `label` from now on.
+    pub fn advertise(&self, label: Label) {
+        self.label.lock(|cell| cell.set(Some(label)));
+        self.changed.signal(());
+    }
+
+    /// What mDNS advertises: the Label, while the Rig is connected, at its
+    /// address. `None` = nothing.
+    pub fn advertisement(&self) -> Option<Advertisement> {
+        let label = self.label.lock(Cell::get)?;
+        let Network { link: Link::Connected, address } = self.network() else { return None };
+        Some(Advertisement::new(label, address))
+    }
+
+    /// Waits until what mDNS advertises is no longer `advertised`, and
+    /// returns what it is now. For the one mDNS responder.
+    pub async fn changed_from(&self, advertised: Option<Advertisement>) -> Option<Advertisement> {
+        loop {
+            let advertisement = self.advertisement();
+            if advertisement != advertised {
+                return advertisement;
+            }
+            self.changed.wait().await;
+        }
     }
 
     /// The radio reports what it is doing.
@@ -91,6 +129,7 @@ impl Wifi {
             change(&mut new);
             state.set(new);
         });
+        self.changed.signal(());
     }
 }
 

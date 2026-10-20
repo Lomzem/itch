@@ -19,6 +19,7 @@ use itch_core::wifi::Credentials;
 use static_cell::StaticCell;
 
 use crate::connections::{TCP_CONNECTIONS, USB};
+use crate::responder;
 use crate::tcp::{self, PORT};
 use crate::wifi::{Radio, WIFI};
 
@@ -29,16 +30,22 @@ const RETRY: Duration = Duration::from_secs(5);
 /// credentials, so the reply to the change reaches its client first.
 const LEAVE_DELAY: Duration = Duration::from_secs(1);
 
-/// The network stack's socket slots: DHCP, the TCP connections, and one
-/// kept for an mDNS responder.
+/// The network stack's socket slots: DHCP, the TCP connections, and the
+/// mDNS responder's.
 const SOCKETS: usize = 1 + TCP_CONNECTIONS + 1;
 
 static RESOURCES: StaticCell<StackResources<SOCKETS>> = StaticCell::new();
 
 /// Sets up the heap, the radio and the network stack, and spawns their
-/// tasks and the TCP connections' tasks. The radio joins with
-/// `credentials`, the ones saved at boot.
-pub fn start(spawner: Spawner, wifi: peripherals::WIFI<'static>, credentials: Option<Credentials>) {
+/// tasks, the TCP connections' tasks and the mDNS responder. The radio
+/// joins with `credentials`, the ones saved at boot; mDNS advertises the
+/// Rig with Hardware ID `hardware_id`.
+pub fn start(
+    spawner: Spawner,
+    wifi: peripherals::WIFI<'static>,
+    credentials: Option<Credentials>,
+    hardware_id: [u8; 6],
+) {
     // The radio's buffers and tasks. It was seen to need about 57 KiB at
     // its peak with one connection; the TCP connections' buffers are their
     // tasks' own RAM, not heap. Most of the heap is RAM the bootloader no
@@ -60,6 +67,7 @@ pub fn start(spawner: Spawner, wifi: peripherals::WIFI<'static>, credentials: Op
     for slot in USB + 1..=TCP_CONNECTIONS {
         spawner.spawn(tcp::tcp(stack, slot).unwrap());
     }
+    spawner.spawn(responder::responder(stack, hardware_id).unwrap());
 }
 
 /// Logs how much of the heap is in use, for checking its headroom on the

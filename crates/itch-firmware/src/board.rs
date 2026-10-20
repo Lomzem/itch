@@ -99,7 +99,7 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
             reset_reason: chip.reset_reason,
             last_panic: chip.last_panic,
         };
-        Self {
+        let board = Self {
             i2c,
             reset,
             led,
@@ -111,7 +111,20 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
             blink: false,
             settings: Settings::new(flash, chip.now, chip.check_in),
             rejoin: false,
-        }
+        };
+        board.advertise();
+        board
+    }
+
+    /// Hands mDNS the Label saved, or the default for an empty one.
+    fn advertise(&self) {
+        let label = self.settings.saved().label;
+        let label = if label.as_str().is_empty() {
+            Label::default_for(self.info.hardware_id)
+        } else {
+            label
+        };
+        self.chip.wifi.advertise(label);
     }
 
     /// Hands the radio credentials saved since the last call. The Rig task
@@ -235,7 +248,9 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
 
     fn save_label(&mut self, label: &str) -> Result<(), StorageFault> {
         let label = Label::new(label).ok_or(StorageFault)?;
-        self.settings.save(Snapshot { label, ..*self.settings.saved() })
+        self.settings.save(Snapshot { label, ..*self.settings.saved() })?;
+        self.advertise();
+        Ok(())
     }
 
     fn load_wifi(&mut self) -> Option<Credentials> {

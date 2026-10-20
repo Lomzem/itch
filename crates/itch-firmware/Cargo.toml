@@ -19,7 +19,10 @@ firmware = [
     "dep:embassy-executor",
     "dep:embassy-net",
     "dep:embassy-time",
+    "dep:edge-nal",
+    "dep:edge-nal-embassy",
     "dep:embedded-io-async",
+    "edge-mdns/io",
     "dep:esp-alloc",
     "dep:esp-bootloader-esp-idf",
     "dep:esp-hal",
@@ -36,13 +39,17 @@ embassy-embedded-hal = { version = "=0.6.0", default-features = false }
 embassy-futures = "=0.1.2"
 embedded-hal = "1.0.0"
 embassy-sync = "=0.8.0"
+# Without `io` it only builds the mDNS records, so host tests cover them.
+edge-mdns = { version = "=0.8.0", default-features = false }
 embedded-storage = "0.3.1"
 itch-core.workspace = true
 log.workspace = true
 sequential-storage = { version = "=8.0.2", default-features = false }
 
 embassy-executor = { version = "=0.10.0", optional = true }
-embassy-net = { version = "=0.9.1", default-features = false, features = ["dhcpv4", "medium-ethernet", "proto-ipv4", "tcp"], optional = true }
+embassy-net = { version = "=0.9.1", default-features = false, features = ["dhcpv4", "medium-ethernet", "multicast", "proto-ipv4", "tcp", "udp"], optional = true }
+edge-nal = { version = "=0.7.0", optional = true }
+edge-nal-embassy = { version = "=0.9.0", default-features = false, features = ["multicast", "proto-ipv4", "udp"], optional = true }
 embassy-time = { version = "=0.5.1", optional = true }
 embedded-io-async = { version = "=0.7.0", optional = true }
 esp-alloc = { version = "=0.11.0", features = ["esp32s3", "internal-heap-stats"], optional = true }
