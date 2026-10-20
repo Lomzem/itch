@@ -7,13 +7,13 @@ use std::future::Future;
 use std::pin::{Pin, pin};
 use std::task::Poll;
 
-use common::{Bench, BenchClock, advance};
+use common::{Bench, BenchClock, STATIC, advance};
 use embassy_futures::poll_once;
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD};
 use itch_core::rig::SETTLE_MS;
-use itch_core::wifi::Credentials;
+use itch_core::wifi::{Addressing, Credentials, StaticAddress};
 use itch_core::wire::{
-    Event, LogLevel, Message, Request, Response, SetLabel, SetWifi, WriteChannels,
+    Event, LogLevel, Message, Request, Response, SetAddress, SetLabel, SetWifi, WriteChannels,
 };
 use itch_firmware::connections::{Connection, Connections, DEPTH};
 use itch_firmware::serve::{REPLY_TIMEOUT_MS, TICK_MS, serve};
@@ -352,4 +352,56 @@ fn a_rename_or_a_failed_save_leaves_the_radio_alone() {
     run(rig.as_mut());
     assert_eq!(drain(usb), ["reply 2"]);
     assert_eq!(handed_to_radio(bench.wifi), None);
+}
+
+fn set_static() -> Request<'static> {
+    let (mode, address, prefix, gateway) = STATIC;
+    Request::SetAddress(SetAddress { holder: "", mode, address, prefix, gateway })
+}
+
+/// The address configuration handed to the network stack since it last
+/// looked. `None` if none was.
+fn handed_to_stack(wifi: &Wifi) -> Option<Addressing> {
+    match poll_once(wifi.addressing()) {
+        Poll::Ready(addressing) => Some(addressing),
+        Poll::Pending => None,
+    }
+}
+
+/// A client on Wi-Fi learns its change was saved before the Rig's address
+/// changes.
+#[test]
+fn set_address_replies_before_the_network_stack_hears_of_it() {
+    let mut bench = Bench::boot();
+    let connections = connections::<1>();
+    let tcp = connections.connect(0);
+    let mut rig = pin!(serve(&mut bench.rig, &mut bench.board, connections, &BenchClock));
+    // Two replies the client hasn't read yet keep the third waiting.
+    send(tcp, 1, Request::Hello);
+    send(tcp, 2, Request::Hello);
+    send(tcp, 3, set_static());
+    run(rig.as_mut());
+    assert_eq!(handed_to_stack(bench.wifi), None);
+
+    assert_eq!(drain(tcp), ["reply 1", "reply 2"]);
+    run(rig.as_mut());
+    assert_eq!(drain(tcp), ["reply 3"]);
+    let (_, address, prefix, gateway) = STATIC;
+    let expected = Addressing::Static(StaticAddress::new(address, prefix, gateway).unwrap());
+    assert_eq!(handed_to_stack(bench.wifi), Some(expected));
+    // A change of address leaves the radio on its network.
+    assert_eq!(handed_to_radio(bench.wifi), None);
+}
+
+#[test]
+fn an_address_change_the_flash_fails_to_save_leaves_the_network_stack_alone() {
+    let mut bench = Bench::boot();
+    let connections = connections::<1>();
+    let usb = connections.connect(0);
+    bench.flash.borrow_mut().broken = true;
+    let mut rig = pin!(serve(&mut bench.rig, &mut bench.board, connections, &BenchClock));
+    send(usb, 1, set_static());
+    run(rig.as_mut());
+    assert_eq!(drain(usb), ["StorageFault 1"]);
+    assert_eq!(handed_to_stack(bench.wifi), None);
 }

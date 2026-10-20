@@ -33,7 +33,7 @@ Use a client adapted to [protocol 3](../protocol/README.md); older released clie
 | Idle tick (readback, check-in), 50 ms | `TICK_MS` | `crates/itch-firmware/src/serve.rs` |
 | USB write timeout, 100 ms | `WRITE_TIMEOUT` | `crates/itch-firmware/src/usb.rs` |
 | Wi-Fi join retry, 5 s | `RETRY` | `crates/itch-firmware/src/radio.rs` |
-| Stay on the old network after new credentials, 1 s | `LEAVE_DELAY` | `crates/itch-firmware/src/radio.rs` |
+| Stay on the old network, or at the old address, after a change, 1 s | `LEAVE_DELAY` | `crates/itch-firmware/src/radio.rs` |
 | Heap, 64 KiB reclaimed + 64 KiB | `heap_allocator!` in `start` | `crates/itch-firmware/src/radio.rs` |
 | TCP connections at once, 4 | `TCP_CONNECTIONS` | `crates/itch-firmware/src/connections.rs` |
 | TCP keepalive 5 s, timeout 15 s | `KEEP_ALIVE`, `TIMEOUT` | `crates/itch-firmware/src/tcp.rs` |
@@ -166,7 +166,7 @@ Each case needs a throwaway build from a scratch branch; don't commit it. Make t
 
 ## Wi-Fi
 
-Items 16–24 need the access point from [Tools](#tools). Keep a USB connection open throughout, with its log level at debug, to read the Rig's Wi-Fi log lines (`joined …`, `couldn't join …`, `lost …`, `serving tcp://…`, `advertising …`, `heap: …`). `GetStatus` gives `link` (off, joining or connected) and `current_address`.
+Items 16–27 need the access point from [Tools](#tools). Keep a USB connection open throughout, with its log level at debug, to read the Rig's Wi-Fi log lines (`joined …`, `couldn't join …`, `lost …`, `serving tcp://…`, `advertising …`, `heap: …`). `GetStatus` gives `link` (off, joining or connected) and `current_address`, and the configured `mode`, `address`, `prefix` and `gateway`.
 
 ## 16. Joining the network **[per-Rig]**
 
@@ -214,20 +214,50 @@ Setup: the test pattern from item 6 (CH1 and CH16 on), with the meter or logic a
 - **Pass:** no reboot (`uptime` keeps rising and `reset_reason` is unchanged), and the heap's `at most` figure stays under 96 KiB of its 128 KiB.
 - **If it fails:** the heap is set in `start` in `crates/itch-firmware/src/radio.rs`: 64 KiB of the 72 KiB the bootloader leaves free, and 64 KiB of ordinary RAM. Taking more ordinary RAM shrinks the main stack, which `xtensa-esp32s3-elf-size -A` on the firmware shows as `.stack`.
 
-## 22. Discovery **[per-Rig]**
+## 22. Static address
+
+The examples use `192.0.2.10/24` with gateway `192.0.2.1`: use a free address on the access point's network, outside its DHCP pool, and its gateway.
+
+- **Method:**
+  1. On a connected Rig, note its DHCP address. Over TCP, send `SetAddress` with mode static, `192.0.2.10`, prefix 24 and gateway `192.0.2.1`. Read `GetStatus` over USB every second.
+  2. Connect to `tcp://192.0.2.10:7878`, send `Hello`, and ping the address from the PC.
+  3. Over that connection, send `SetAddress` again with `192.0.2.11` and no gateway, then connect to `tcp://192.0.2.11:7878`.
+  4. Power-cycle the Rig.
+- **Pass:**
+  - Each reply arrives over the TCP connection that sent it before that connection drops.
+  - About 1 s after each reply, `GetStatus` shows mode static with the address, prefix and gateway as sent, and `current_address` is that address. `link` stays connected throughout: the Rig doesn't leave the network, and the access point lists it all along.
+  - `Hello` and ping answer at each new address.
+  - After the power cycle the Rig joins again at `192.0.2.11` by itself. Before it has joined, `GetStatus` shows mode static with `current_address` zero.
+- **If it fails:** the board hands the configuration to the network stack only after the reply is queued (`apply_settings` in `crates/itch-firmware/src/board.rs`), and the `readdress` task in `crates/itch-firmware/src/radio.rs` applies it `LEAVE_DELAY` later. A `current_address` that keeps the old address after a static-to-static change means `readdress` didn't report the new one to `WIFI`. A configuration that doesn't survive the power cycle is a settings matter (item 5).
+
+## 23. Back to DHCP
+
+- **Method:** on the Rig at its static address from item 22, send `SetAddress` over TCP with mode DHCP and every other field zero. Read `GetStatus` over USB, then power-cycle the Rig.
+- **Pass:** the reply arrives over TCP before that connection drops. `GetStatus` shows mode DHCP with address, prefix and gateway zero, and within about 10 s `current_address` is the address the access point's DHCP lease table shows for the Rig's Hardware ID. `wifi_configured` and `ssid` are unchanged: the passphrase was never re-sent. The Rig takes a DHCP address again after the power cycle.
+- **If it fails:** as item 22. A Rig that never gets a lease after the switch didn't recreate its DHCP client: check `config_v4` in `crates/itch-firmware/src/radio.rs`.
+
+## 24. Wrong static address recovered over USB
+
+Setup: the test pattern from item 6 (CH1 and CH16 on), with the meter or logic analyser on all 16 contacts.
+
+- **Method:** over TCP, send `SetAddress` with a static address on no network the access point serves, such as `198.51.100.10/24` with gateway `198.51.100.1`. Try to reach the Rig over TCP at that address and at its old one for 1 minute. Then over USB, read `GetStatus` and send `SetAddress` with mode DHCP.
+- **Pass:** the Rig is unreachable over Wi-Fi, but `link` stays connected and `current_address` is `198.51.100.10`: it doesn't fall back to DHCP or check for a conflict. USB answers normally throughout, and the contacts keep the test pattern. After the USB `SetAddress` the Rig takes a DHCP address and is reachable over TCP again, with no reboot: `uptime` keeps rising and `reset_reason` is unchanged.
+- **If it fails:** USB is served apart from the network stack (`crates/itch-firmware/src/usb.rs`), so a USB stall here is a scheduling matter, as in item 19.
+
+## 25. Discovery **[per-Rig]**
 
 - **Method:** label the Rig `bench-3` and connect it to `ExampleRigNet` by DHCP. On the Linux PC run `avahi-browse -rt _itch._tcp` and `avahi-resolve -n itch-c02718.local`; on the Windows PC run `dns-sd -B _itch._tcp` and `dns-sd -L bench-3 _itch._tcp`. Connect a client to the address and port found and send `Hello`. Then give the Rig a static address with `SetAddress` and repeat.
 - **Pass:** both PCs find one `bench-3` instance on port 7878 with host `itch-c02718.local` and TXT `hwid=60:55:F9:C0:27:18`, matching the Rig's Hardware ID. The hostname resolves to the Rig's `current_address`, the DHCP lease, then the static address. `Hello` over TCP reports the same Hardware ID and label as over USB.
 - **If it fails:** each time the responder starts, the USB log says `advertising bench-3 as itch-c02718.local at …`; `mDNS didn't start` and `mDNS stopped` warnings give its error. The responder is `crates/itch-firmware/src/responder.rs` and its records are `Answers` in `crates/itch-firmware/src/mdns.rs`. If the Rig says it is advertising but no PC sees it, capture `udp port 5353` in Wireshark: an access point that isolates wireless clients or filters multicast drops the Rig's packets. Use `tcp://<current_address>:7878` meanwhile.
 
-## 23. Renaming re-advertises
+## 26. Renaming re-advertises
 
 - **Method:** keep `avahi-browse -r _itch._tcp` running, so it follows changes. Over USB, rename the Rig `bench-4`, then a 64-byte label, then `bench-3`. Lock the Rig under another Holder and try renaming it again.
 - **Pass:** within a few seconds of each rename, the browser removes the old instance and adds the new one, with the same host, address and TXT. The 64-byte label appears cut to its first 63 bytes. The refused rename changes nothing.
 - **If it fails:** the board hands the label to mDNS at boot and after each saved rename (`RevA::advertise` in `crates/itch-firmware/src/board.rs`), and the responder starts again when `Wifi::changed_from` in `crates/itch-firmware/src/wifi.rs` wakes it, sending a goodbye for the old instance first. An old instance that stays listed until its 120 s TTL runs out means the goodbye was lost.
 
-## 24. Re-advertising after a rejoin
+## 27. Re-advertising after a rejoin
 
 - **Method:** keep `avahi-browse -r _itch._tcp` running. Reboot the access point. Then move the Rig to `ExampleRigNet2` and back, as in item 18, and finally power-cycle it.
 - **Pass:** each time the Rig is connected again, the browser lists it within a few seconds of `link` showing connected, at its new `current_address`, with nothing queried by hand. While it is away, its instance drops out within about 2 minutes. After the power cycle it is advertised under its saved label.
-- **If it fails:** the responder only runs while `Wifi::network` reports connected, and the address it advertises comes from the `address` task in `crates/itch-firmware/src/radio.rs`.
+- **If it fails:** the responder only runs while `Wifi::network` reports connected, and the address it advertises comes from the `address` and `readdress` tasks in `crates/itch-firmware/src/radio.rs`.

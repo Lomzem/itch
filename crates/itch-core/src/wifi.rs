@@ -1,8 +1,9 @@
-//! The Wi-Fi credentials the Rig joins its network with.
+//! How the Rig joins its network: the Wi-Fi credentials, and how it takes
+//! its IPv4 address there.
 
 use core::fmt;
 
-use crate::wire::{MAX_PASSPHRASE, MAX_SSID, MIN_PASSPHRASE};
+use crate::wire::{AddressMode, MAX_PASSPHRASE, MAX_SSID, MIN_PASSPHRASE};
 
 /// A network name (SSID) and its WPA2-Personal passphrase, held inline so
 /// the core needs no allocator.
@@ -46,5 +47,90 @@ impl Credentials {
 impl fmt::Debug for Credentials {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Credentials").field("ssid", &self.ssid()).finish_non_exhaustive()
+    }
+}
+
+/// How the Rig takes its IPv4 address on the network.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Addressing {
+    /// From the network's DHCP server.
+    #[default]
+    Dhcp,
+    /// Exactly the address given, with no conflict check and no fallback.
+    Static(StaticAddress),
+}
+
+impl Addressing {
+    /// The configuration the protocol's `mode`, `address`, `prefix` and
+    /// `gateway` describe, or `None` unless DHCP has them all zero, or
+    /// static has a non-zero address and a prefix of 1 to 32.
+    pub fn new(mode: AddressMode, address: [u8; 4], prefix: u8, gateway: [u8; 4]) -> Option<Self> {
+        match mode {
+            AddressMode::Dhcp => {
+                (address == [0; 4] && prefix == 0 && gateway == [0; 4]).then_some(Self::Dhcp)
+            }
+            AddressMode::Static => StaticAddress::new(address, prefix, gateway).map(Self::Static),
+        }
+    }
+
+    pub fn mode(&self) -> AddressMode {
+        match self {
+            Self::Dhcp => AddressMode::Dhcp,
+            Self::Static(_) => AddressMode::Static,
+        }
+    }
+
+    /// The static address. Zero for DHCP.
+    pub fn address(&self) -> [u8; 4] {
+        self.as_static().map_or([0; 4], StaticAddress::address)
+    }
+
+    /// The static prefix length. Zero for DHCP.
+    pub fn prefix(&self) -> u8 {
+        self.as_static().map_or(0, StaticAddress::prefix)
+    }
+
+    /// The static gateway. Zero for DHCP or no gateway.
+    pub fn gateway(&self) -> [u8; 4] {
+        self.as_static().and_then(StaticAddress::gateway).unwrap_or_default()
+    }
+
+    fn as_static(&self) -> Option<&StaticAddress> {
+        match self {
+            Self::Dhcp => None,
+            Self::Static(address) => Some(address),
+        }
+    }
+}
+
+/// A static IPv4 address: a non-zero address, a prefix length of 1 to 32,
+/// and an optional gateway.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StaticAddress {
+    address: [u8; 4],
+    prefix: u8,
+    /// Zero = none.
+    gateway: [u8; 4],
+}
+
+impl StaticAddress {
+    /// `None` unless `address` is non-zero and `prefix` 1 to 32. A zero
+    /// `gateway` means none.
+    pub fn new(address: [u8; 4], prefix: u8, gateway: [u8; 4]) -> Option<Self> {
+        let valid = address != [0; 4] && (1..=32).contains(&prefix);
+        valid.then_some(Self { address, prefix, gateway })
+    }
+
+    pub fn address(&self) -> [u8; 4] {
+        self.address
+    }
+
+    pub fn prefix(&self) -> u8 {
+        self.prefix
+    }
+
+    /// `None` = no gateway.
+    pub fn gateway(&self) -> Option<[u8; 4]> {
+        (self.gateway != [0; 4]).then_some(self.gateway)
     }
 }

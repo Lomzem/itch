@@ -1,6 +1,6 @@
 mod common;
 
-use common::{Bench, Flash};
+use common::{Bench, DHCP, Flash, STATIC};
 
 /// The default label for the bench's Hardware ID, 02:00:00:AC:E0:01.
 const DEFAULT: &str = "itch-ACE001";
@@ -148,4 +148,61 @@ fn credentials_the_flash_fails_to_save_are_refused_and_the_old_ones_kept() {
 
     let mut bench = bench.power_cycle();
     assert_eq!(bench.credentials(), credentials(SSID, PASSPHRASE));
+}
+
+#[test]
+fn a_static_address_survives_a_power_cycle() {
+    let mut bench = Bench::boot();
+    assert_eq!(bench.addressing(), DHCP);
+    assert_eq!(bench.set_address(STATIC), Ok(()));
+
+    let mut bench = bench.power_cycle();
+    assert_eq!(bench.addressing(), STATIC);
+}
+
+#[test]
+fn switching_back_to_dhcp_survives_a_power_cycle() {
+    let mut bench = Bench::boot();
+    bench.set_address(STATIC).unwrap();
+    assert_eq!(bench.set_address(DHCP), Ok(()));
+
+    let mut bench = bench.power_cycle();
+    assert_eq!(bench.addressing(), DHCP);
+}
+
+#[test]
+fn changing_the_address_keeps_the_label_and_credentials_and_they_keep_it() {
+    let mut bench = Bench::boot();
+    bench.set_label("bench-3").unwrap();
+    bench.set_wifi(SSID, PASSPHRASE).unwrap();
+    bench.set_address(STATIC).unwrap();
+    let mut bench = bench.power_cycle();
+    assert_eq!(bench.label(), "bench-3");
+    assert_eq!(bench.credentials(), credentials(SSID, PASSPHRASE));
+
+    bench.set_label("bench-4").unwrap();
+    bench.set_wifi("OtherExampleNet", "another-passphrase").unwrap();
+    let mut bench = bench.power_cycle();
+    assert_eq!(bench.addressing(), STATIC);
+}
+
+#[test]
+fn a_version_1_record_loads_with_dhcp() {
+    let mut bench = Bench::boot_with(Flash::holding(b"\x01\x00\x07bench-3"));
+    assert_eq!(bench.addressing(), DHCP);
+}
+
+#[test]
+fn an_address_the_flash_fails_to_save_is_refused_and_the_old_one_kept() {
+    let mut bench = Bench::boot();
+    bench.set_address(STATIC).unwrap();
+    bench.flash.borrow_mut().broken = true;
+    assert_eq!(bench.set_address(DHCP), Err("StorageFault".into()));
+    assert_eq!(bench.addressing(), STATIC);
+    // A later label change saves the address the Rig still has.
+    bench.flash.borrow_mut().broken = false;
+    bench.set_label("bench-3").unwrap();
+
+    let mut bench = bench.power_cycle();
+    assert_eq!(bench.addressing(), STATIC);
 }

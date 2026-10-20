@@ -3,7 +3,7 @@ mod common;
 use common::TestRig;
 use itch_core::board::Counters;
 use itch_core::frame::FrameError;
-use itch_core::wire::{Link, Lock, Reply, Request, StatusReply};
+use itch_core::wire::{AddressMode, Link, Lock, Reply, Request, StatusReply};
 
 fn status(rig: &mut TestRig) -> StatusReply<'static> {
     match rig.ok(Request::GetStatus) {
@@ -39,6 +39,10 @@ fn status_reports_uptime_reset_reason_last_panic_and_the_counters() {
             ssid: "",
             link: Link::Off,
             current_address: [0; 4],
+            mode: AddressMode::Dhcp,
+            address: [0; 4],
+            prefix: 0,
+            gateway: [0; 4],
         }
     );
 }
