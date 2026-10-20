@@ -77,7 +77,7 @@ A payload is one message. Its first byte, `type`, sets its kind:
 | `status` | `u8` | 0 = ok, otherwise an error code from [`errors.md`](errors.md) |
 | body | | On ok, the result body (per message). On error, `detail: text`, which may be empty |
 
-A `Hello` refused with `Busy` and detail `queue full`:
+A `Hello` refused with `Busy` and detail `queue full`, an illustrative codec example of a nonempty detail; current firmware sends `Busy` with an empty detail:
 
 ```hex
 81 78 56 34 12 07 0a 71 75 65 75 65 20 66 75 6c 6c

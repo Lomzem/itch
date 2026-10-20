@@ -5,7 +5,7 @@
 - [itch](https://github.com/Lomzem/itch) owns the Rust core, Rig firmware,
   simulator, protocol specification and conformance vectors.
 - [itch-py](https://github.com/Lomzem/itch-py) owns the Python client,
-  Sessions, Profiles, USB discovery and CLI. Its Python distribution and
+  Profiles, USB discovery and CLI. Its Python distribution and
   import name are both `itch`.
 
 Sibling checkouts are convenient for development; each repo also works

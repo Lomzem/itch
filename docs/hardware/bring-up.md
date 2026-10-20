@@ -66,15 +66,18 @@ Use a client adapted to [protocol 2](../protocol/README.md); older released clie
 
 ## 6. USB open/close leaves the Rig alone
 
-On both Linux and Windows 11, capture USB (usbmon / USBPcap) while a script runs 1,000 cycles of `Rig.connect("60:55:F9:C0:27:18")` → `rig.status()` → `close()`, logging `uptime` and `reset_reason` each time. Then repeat a few cycles after each of these:
+Setup: turn CH1 and CH16 on and every other Channel off, and put the meter or logic analyser on all 16 contacts. This is the test pattern.
+
+On both Linux and Windows 11, capture USB (usbmon / USBPcap) while a script runs 1,000 cycles of `Rig.connect("60:55:F9:C0:27:18")` → `rig.status()` → `get_channels()` → `close()`, logging `uptime`, `reset_reason` and the Channels each time. The script only reads; it never sets Channels. Then repeat a few cycles after each of these, with the Rig powered throughout:
 
 - the script killed mid-call (`kill -KILL` / `taskkill /F`);
-- an unplug and replug;
+- the port closed and reopened by a fresh script;
 - a PC reboot;
 - another serial tool having used the port.
 
-- **Pass:** the Wireshark filter `usb.setup.bRequest == 0x22 && (usb.setup.wValue == 1 || usb.setup.wValue == 2)` (SET_CONTROL_LINE_STATE with only DTR, or only RTS) matches nothing. `uptime` keeps rising and `reset_reason` never changes within a boot.
-- **If it fails:** a lone RTS resets the S3, and a lone DTR sets its download flag. The policy is the `lines` value in `UsbTransport.__init__` (itch-py `src/itch/_usb.py`): True/True on Linux, False/False on Windows. If Windows fails with False/False, try True/True there. Never change the lines after `open()`.
+- **Pass:** the Wireshark filter `usb.setup.bRequest == 0x22 && (usb.setup.wValue == 1 || usb.setup.wValue == 2)` (SET_CONTROL_LINE_STATE with only DTR, or only RTS) matches nothing. `uptime` keeps rising and `reset_reason` never changes. `get_channels()` reports the test pattern every time, and only the CH1 and CH16 contacts measure closed throughout, including while no script has the port open.
+- **Power loss or reset is a different case.** A USB unplug and replug powers a USB-powered Rig off, and a PC reboot may too if the port drops power. Either shows as `uptime` restarting and a new `reset_reason`. The Rig then boots Clear, as item 10 checks, so expect every Channel off and every contact open; the Channel state is not retained. Restore the test pattern before the next cycles. A PC reboot passes the powered checks above only if `uptime` shows the Rig stayed up.
+- **If it fails:** a lone RTS resets the S3, and a lone DTR sets its download flag. The policy is the `lines` value in `UsbTransport.__init__` (itch-py `src/itch/_usb.py`): True/True on Linux, False/False on Windows. If Windows fails with False/False, try True/True there. Never change the lines after `open()`. If `uptime` keeps rising but Channels changed, something Cleared or wrote them without a reset: check that the script and the other serial tool send no Channel writes.
 
 ## 7. Finding Rigs over USB
 
