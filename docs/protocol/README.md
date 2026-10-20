@@ -11,10 +11,13 @@ This is **protocol 3**.
 
 ## Transports
 
-The Rig speaks one framed byte stream, the same over every transport:
+The Rig speaks one framed byte stream, the same over every transport. Its two Transports, USB and Wi-Fi, are both live at once and behave identically (ADR 0008):
 
-- **USB:** the ESP32-S3's native USB Serial/JTAG port (VID `0x303A`, PID `0x1001`). The USB serial number is the Rig's Hardware ID. This is how QA reach a Rig.
-- **TCP:** `itch-sim`, for development and integration tests without hardware. One TCP connection is one stream; concurrent connections share one simulated Rig. Rig firmware supports USB only (ADR 0006).
+- **USB:** the ESP32-S3's native USB Serial/JTAG port (VID `0x303A`, PID `0x1001`). The USB serial number is the Rig's Hardware ID. USB always works, whatever the Wi-Fi is doing, so it is also how a Rig is flashed, provisioned and recovered.
+- **Wi-Fi:** TCP port **7878** on the Rig's network. One TCP connection is one stream. A Rig serves up to **4** TCP connections at once beside USB and refuses any more straight away. A connection whose client stops answering is dropped about 15 s after it last heard from it (keepalive every 5 s), which frees its place. The link is neither encrypted nor authenticated; the Rig network is the access boundary.
+- **`itch-sim`** serves the same stream over TCP, for development and integration tests without hardware. Its connections share one simulated Rig, with the same limit of 4.
+
+A Rig without Wi-Fi credentials keeps its radio off and works over USB alone. To put it on a network, send [`SetWifi`](messages.md#setwifi) over either Transport: the Rig joins as a WPA2-Personal station, takes an address by DHCP, and joins again every few seconds after any failure or drop, keeping its Channels as they are throughout. `GetStatus` reports the `link` and the Rig's `current_address`; connect to `tcp://<current_address>:7878`, e.g. `tcp://192.0.2.10:7878`. A Rig that won't join can always be inspected and fixed over USB.
 
 The Rig can't see connection boundaries over USB, so `Hello` is optional on the wire. Clients should still send it first on every connection. It identifies the Rig without changing Channels, log filtering or other Rig state.
 
@@ -137,7 +140,7 @@ A Holder name is a plain name, not a secret: the Lock guards against accidents, 
 
 ## Log delivery
 
-`Log` Events are unsolicited and need no client requests or heartbeat. `SetLogLevel` selects which ones the stream receives and discards its queued backlog. USB has one stream for the life of the Rig: its level persists until changed or rebooted, so a new client should explicitly set its level, including off. A simulator TCP connection starts with logs off. `Hello` does not reset this setting.
+`Log` Events are unsolicited and need no client requests or heartbeat. `SetLogLevel` selects which ones the stream receives and discards its queued backlog. USB has one stream for the life of the Rig: its level persists until changed or rebooted, so a new client should explicitly set its level, including off. Every TCP connection, to a Rig or the simulator, starts with logs off. `Hello` does not reset this setting.
 
 ## Versioning
 

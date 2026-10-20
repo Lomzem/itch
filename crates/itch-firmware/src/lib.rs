@@ -10,8 +10,13 @@ pub mod connections;
 pub mod crash;
 #[cfg(feature = "firmware")]
 pub mod logger;
+#[cfg(feature = "firmware")]
+pub mod radio;
 pub mod serve;
 pub mod settings;
 pub mod supervisor;
 #[cfg(feature = "firmware")]
+pub mod tcp;
+#[cfg(feature = "firmware")]
 pub mod usb;
+pub mod wifi;

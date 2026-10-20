@@ -11,9 +11,13 @@ use common::{Bench, BenchClock, advance};
 use embassy_futures::poll_once;
 use itch_core::frame::{FrameDecoder, MAX_FRAME, MAX_PAYLOAD};
 use itch_core::rig::SETTLE_MS;
-use itch_core::wire::{Event, LogLevel, Message, Request, Response, WriteChannels};
+use itch_core::wifi::Credentials;
+use itch_core::wire::{
+    Event, LogLevel, Message, Request, Response, SetLabel, SetWifi, WriteChannels,
+};
 use itch_firmware::connections::{Connection, Connections, DEPTH};
 use itch_firmware::serve::{REPLY_TIMEOUT_MS, TICK_MS, serve};
+use itch_firmware::wifi::Wifi;
 use log::Level;
 
 // Links the host's critical section, which the connections lock with.
@@ -279,4 +283,73 @@ fn the_idle_tick_restores_channels_an_expander_lost() {
     advance(1);
     run(rig.as_mut());
     assert_eq!(bench.expander.borrow().driven(), (0x00, 0x80), "CH1 on again");
+}
+
+const SSID: &str = "ExampleRigNet";
+const PASSPHRASE: &str = "example-passphrase";
+
+fn set_wifi<'a>(ssid: &'a str, passphrase: &'a str) -> Request<'a> {
+    Request::SetWifi(SetWifi { holder: "", ssid, passphrase })
+}
+
+/// The credentials handed to the radio since it last looked: `None` if
+/// none were, `Some(None)` if they were cleared.
+fn handed_to_radio(wifi: &Wifi) -> Option<Option<Credentials>> {
+    match poll_once(wifi.credentials()) {
+        Poll::Ready(credentials) => Some(credentials),
+        Poll::Pending => None,
+    }
+}
+
+/// A client on Wi-Fi learns its change was saved before the Rig leaves
+/// the network.
+#[test]
+fn set_wifi_replies_before_the_radio_hears_of_the_new_credentials() {
+    let mut bench = Bench::boot();
+    let connections = connections::<1>();
+    let tcp = connections.connect(0);
+    let mut rig = pin!(serve(&mut bench.rig, &mut bench.board, connections, &BenchClock));
+    // Two replies the client hasn't read yet keep the third waiting.
+    send(tcp, 1, Request::Hello);
+    send(tcp, 2, Request::Hello);
+    send(tcp, 3, set_wifi(SSID, PASSPHRASE));
+    run(rig.as_mut());
+    assert_eq!(handed_to_radio(bench.wifi), None);
+
+    assert_eq!(drain(tcp), ["reply 1", "reply 2"]);
+    run(rig.as_mut());
+    assert_eq!(drain(tcp), ["reply 3"]);
+    assert_eq!(handed_to_radio(bench.wifi), Some(Credentials::new(SSID, PASSPHRASE)));
+}
+
+#[test]
+fn cleared_wifi_credentials_reach_the_radio_as_none() {
+    let mut bench = Bench::boot();
+    let connections = connections::<1>();
+    let usb = connections.connect(0);
+    let mut rig = pin!(serve(&mut bench.rig, &mut bench.board, connections, &BenchClock));
+    send(usb, 1, set_wifi(SSID, PASSPHRASE));
+    send(usb, 2, set_wifi("", ""));
+    run(rig.as_mut());
+
+    assert_eq!(drain(usb), ["reply 1", "reply 2"]);
+    assert_eq!(handed_to_radio(bench.wifi), Some(None));
+}
+
+#[test]
+fn a_rename_or_a_failed_save_leaves_the_radio_alone() {
+    let mut bench = Bench::boot();
+    let connections = connections::<1>();
+    let usb = connections.connect(0);
+    bench.flash.borrow_mut().broken = true;
+    let mut rig = pin!(serve(&mut bench.rig, &mut bench.board, connections, &BenchClock));
+    send(usb, 1, set_wifi(SSID, PASSPHRASE));
+    run(rig.as_mut());
+    assert_eq!(drain(usb), ["StorageFault 1"]);
+
+    bench.flash.borrow_mut().broken = false;
+    send(usb, 2, Request::SetLabel(SetLabel { holder: "", label: "bench-3" }));
+    run(rig.as_mut());
+    assert_eq!(drain(usb), ["reply 2"]);
+    assert_eq!(handed_to_radio(bench.wifi), None);
 }

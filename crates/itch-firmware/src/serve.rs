@@ -68,5 +68,8 @@ where
         // waiting until the Rig task misses its deadline: drop it instead.
         let deadline = board.now() + REPLY_TIMEOUT_MS;
         select(request.from.reply(Payload::new(&reply[..len])), clock.until(deadline)).await;
+        // Only now, so a change that moves the Rig off the network is
+        // answered first.
+        board.apply_settings();
     }
 }

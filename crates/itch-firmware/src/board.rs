@@ -10,6 +10,7 @@ use itch_core::label::Label;
 use itch_core::wifi::Credentials;
 
 use crate::settings::{Settings, Snapshot};
+use crate::wifi::Wifi;
 
 /// The MCP23017's I2C address: A0-A2 are tied to GND.
 const EXPANDER: u8 = 0x20;
@@ -61,6 +62,8 @@ pub struct Chip {
     pub check_in: fn(u64),
     /// The counters the logger and the transport writers keep.
     pub counters: fn() -> Counters,
+    /// What the radio and the network stack report.
+    pub wifi: &'static Wifi,
 }
 
 /// The Rev A board: an MCP23017 on I2C driving the 16 Channels, with its
@@ -79,6 +82,8 @@ pub struct RevA<I2C, RESET, LED, DELAY, FLASH: NorFlash> {
     /// Where a fault blink is: lit or not.
     blink: bool,
     settings: Settings<FLASH>,
+    /// New credentials were saved but not yet handed to the radio.
+    rejoin: bool,
 }
 
 impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash>
@@ -105,6 +110,16 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
             faulted: false,
             blink: false,
             settings: Settings::new(flash, chip.now, chip.check_in),
+            rejoin: false,
+        }
+    }
+
+    /// Hands the radio credentials saved since the last call. The Rig task
+    /// calls it once the reply to the change is on its way, so a client on
+    /// Wi-Fi learns the change was saved before the Rig leaves the network.
+    pub fn apply_settings(&mut self) {
+        if core::mem::take(&mut self.rejoin) {
+            self.chip.wifi.join(self.settings.saved().wifi);
         }
     }
 
@@ -227,13 +242,16 @@ impl<I2C: I2c, RESET: OutputPin, LED: OutputPin, DELAY: DelayNs, FLASH: NorFlash
         self.settings.saved().wifi
     }
 
+    /// The radio joins with them once [`apply_settings`](Self::apply_settings)
+    /// hands them over.
     fn save_wifi(&mut self, wifi: Option<&Credentials>) -> Result<(), StorageFault> {
-        self.settings.save(Snapshot { wifi: wifi.copied(), ..*self.settings.saved() })
+        self.settings.save(Snapshot { wifi: wifi.copied(), ..*self.settings.saved() })?;
+        self.rejoin = true;
+        Ok(())
     }
 
-    /// The radio isn't brought up yet, so the link is always off.
     fn network(&self) -> Network {
-        Network::default()
+        self.chip.wifi.network()
     }
 }
 
@@ -271,7 +289,7 @@ mod esp32s3 {
     use esp_hal::delay::Delay;
     use esp_hal::gpio::{Level, Output, OutputConfig};
     use esp_hal::i2c::master::{Config, I2c, SoftwareTimeout};
-    use esp_hal::peripherals::{GPIO, GPIO6};
+    use esp_hal::peripherals::{self, GPIO, GPIO6};
     use esp_hal::rtc_cntl::{Rtc, Rwdt, RwdtStage, RwdtStageAction};
     use esp_hal::time::Duration;
     use esp_hal::timer::timg::TimerGroup;
@@ -284,6 +302,7 @@ mod esp32s3 {
     use super::{Chip, RevA};
     use crate::crash::{self, RECORD_LEN, Record};
     use crate::supervisor::{self, ResetLine};
+    use crate::wifi::WIFI;
     use crate::{logger, usb};
 
     /// The expander's RESET is GPIO6, pulled low on the board.
@@ -324,6 +343,8 @@ mod esp32s3 {
         /// USB Serial/JTAG, which keeps espflash's auto-reset on the same cable.
         pub usb_rx: UsbRx,
         pub usb_tx: UsbTx,
+        /// The radio, for Wi-Fi.
+        pub radio: peripherals::WIFI<'static>,
     }
 
     /// Boots the chip. The expander RESET is driven low before anything
@@ -365,12 +386,13 @@ mod esp32s3 {
             now: || embassy_time::Instant::now().as_millis(),
             check_in: supervisor::check_in,
             counters,
+            wifi: &WIFI,
         };
         let (usb_rx, usb_tx) = UsbSerialJtag::new(p.USB_DEVICE).into_async().split();
         let reset = ResetLine::new(reset, &supervisor::TRIPPED);
         let flash = FlashStorage::new(p.FLASH);
         let board = RevA::new(i2c, reset, led, Delay::new(), flash, chip);
-        Parts { board, watchdog, usb_rx, usb_tx }
+        Parts { board, watchdog, usb_rx, usb_tx, radio: p.WIFI }
     }
 
     /// Takes the crash record the previous boot left, clearing it so it is
