@@ -322,6 +322,7 @@ mod esp32s3 {
     use core::panic::Location;
     use core::sync::atomic::{AtomicU32, Ordering};
 
+    use esp_hal::clock::CpuClock;
     use esp_hal::delay::Delay;
     use esp_hal::gpio::{Level, Output, OutputConfig};
     use esp_hal::i2c::master::{Config, I2c, SoftwareTimeout};
@@ -349,8 +350,11 @@ mod esp32s3 {
     const I2C_TIMEOUT: Duration = Duration::from_millis(10);
 
     /// How long the RTC watchdog waits for a feed before it resets the whole
-    /// chip. Only the supervisor and `rig`'s check-ins in time feed it.
-    const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(2);
+    /// chip. Only the supervisor and `rig`'s check-ins in time feed it. It
+    /// stays 1 s above the supervisor deadline, so a stall the supervisor
+    /// would forgive never resets the chip, and a missed deadline holds the
+    /// expander in reset before the chip resets.
+    const WATCHDOG_TIMEOUT: Duration = Duration::from_millis(supervisor::DEADLINE_MS + 1000);
 
     /// The crash record a panic leaves for the next boot. RTC RAM keeps it
     /// through the reset; power-on zeroes it.
@@ -391,7 +395,12 @@ mod esp32s3 {
         // A plain GPIO with no pad hold. This Output is GPIO6's only owner:
         // nothing may use `GPIO6` from the peripherals below.
         let reset = Output::new(unsafe { GPIO6::steal() }, Level::Low, OutputConfig::default());
-        let p = esp_hal::init(esp_hal::Config::default());
+        // At the default 80 MHz, joining a WPA2 network stalled `rig`'s
+        // executor for up to 1.8 s while interrupts kept running: the
+        // radio's own higher-priority task was busy, most likely deriving
+        // the key from the passphrase. Running three times faster shortens
+        // that stall to match.
+        let p = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
 
         let mut watchdog = Rtc::new(p.RTC_TIMER).rwdt;
         watchdog.set_timeout(RwdtStage::Stage0, WATCHDOG_TIMEOUT);
