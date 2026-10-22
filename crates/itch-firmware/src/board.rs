@@ -349,8 +349,11 @@ mod esp32s3 {
     const I2C_TIMEOUT: Duration = Duration::from_millis(10);
 
     /// How long the RTC watchdog waits for a feed before it resets the whole
-    /// chip. Only the supervisor and `rig`'s check-ins in time feed it.
-    const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(2);
+    /// chip. Only the supervisor and `rig`'s check-ins in time feed it. It
+    /// stays 1 s above the supervisor deadline, so a stall the supervisor
+    /// would forgive never resets the chip, and a missed deadline holds the
+    /// expander in reset before the chip resets.
+    const WATCHDOG_TIMEOUT: Duration = Duration::from_millis(supervisor::DEADLINE_MS + 1000);
 
     /// The crash record a panic leaves for the next boot. RTC RAM keeps it
     /// through the reset; power-on zeroes it.

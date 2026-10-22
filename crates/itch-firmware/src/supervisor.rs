@@ -20,8 +20,11 @@ use embedded_hal::digital::{ErrorType, OutputPin};
 #[cfg(feature = "firmware")]
 use esp_hal::rtc_cntl::Rwdt;
 
-/// How long `rig` may go without checking in.
-pub const DEADLINE_MS: u64 = 1000;
+/// How long `rig` may go without checking in. Starting Wi-Fi association
+/// starves the executor for up to 1830 ms, so this is over twice that: a
+/// reset Clears every Channel, which costs more than a slower response to a
+/// real hang. It stays above the longest single flash erase or write.
+pub const DEADLINE_MS: u64 = 4000;
 
 /// Set once `rig` misses its deadline.
 pub static TRIPPED: Latch = Latch::new();
