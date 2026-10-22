@@ -1,6 +1,6 @@
 mod common;
 
-use common::{Bench, IODIRA, OLATA, Op, advance};
+use common::{Bench, IODIRA, OLATA, Op, advance, since_fed};
 use itch_core::board::{Board, HwFault};
 use itch_firmware::supervisor::{Check, DEADLINE_MS};
 
@@ -156,4 +156,19 @@ fn once_the_supervisor_trips_the_expander_stays_in_reset() {
     bench.tick();
     assert!(bench.expander.borrow().in_reset());
     assert_eq!(bench.driven(), (0x00, 0x00));
+}
+
+#[test]
+fn the_measured_wifi_association_stall_keeps_channels_on_and_the_watchdog_fed() {
+    let mut bench = Bench::boot();
+    bench.write(0xFFFF, 0x0181);
+    bench.tick();
+
+    // Longest completed check-in gap across 30 instrumented boots.
+    advance(1830);
+    assert_eq!(bench.supervise(), Check::Fresh);
+    assert_eq!(since_fed(), Some(0));
+    bench.tick();
+    assert_eq!(bench.board.read_channels(), Ok(0x0181));
+    assert_eq!(bench.driven(), (0x80, 0x81));
 }
