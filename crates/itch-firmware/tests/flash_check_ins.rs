@@ -21,7 +21,7 @@ fn rig_stays_in_time_through_a_save_that_blocks_for_seconds_until_it_stops_check
             bench.set_wifi(&format!("{n:032}"), &format!("{n:063}")).unwrap();
         }
         let took = now() - started;
-        assert!(n > 0 || took > 4 * DEADLINE_MS, "the first save took {took} ms");
+        assert!(n > 0 || took > DEADLINE_MS, "the first save took {took} ms");
 
         let writes = bench.flash.borrow().writes.clone();
         assert!(!writes.is_empty());

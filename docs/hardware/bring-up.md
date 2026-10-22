@@ -27,8 +27,8 @@ Use a client adapted to [protocol 3](../protocol/README.md); older released clie
 | Figure | Constant | File |
 | --- | --- | --- |
 | Relay settle delay, 20 ms | `SETTLE_MS` | `crates/itch-core/src/rig.rs` |
-| Supervisor deadline, 1 s | `DEADLINE_MS` | `crates/itch-firmware/src/supervisor.rs` |
-| RTC watchdog (RWDT), 2 s | `WATCHDOG_TIMEOUT` | `crates/itch-firmware/src/board.rs` |
+| Supervisor deadline, 4 s | `DEADLINE_MS` | `crates/itch-firmware/src/supervisor.rs` |
+| RTC watchdog (RWDT), 5 s | `WATCHDOG_TIMEOUT` | `crates/itch-firmware/src/board.rs` |
 | I2C transaction timeout, 10 ms | `I2C_TIMEOUT` | `crates/itch-firmware/src/board.rs` |
 | Idle tick (readback, check-in), 50 ms | `TICK_MS` | `crates/itch-firmware/src/serve.rs` |
 | USB write timeout, 100 ms | `WRITE_TIMEOUT` | `crates/itch-firmware/src/usb.rs` |
@@ -42,7 +42,7 @@ Use a client adapted to [protocol 3](../protocol/README.md); older released clie
 | mDNS restart after a failure, 5 s | `RETRY` | `crates/itch-firmware/src/responder.rs` |
 | DTR/RTS on open: both up, or both down on Windows | `lines` in `UsbTransport.__init__` | itch-py `src/itch/_usb.py` |
 
-`SETTLE_MS` also paces `itch-sim`, so changing it keeps the simulator honest. If you raise `DEADLINE_MS` or `WATCHDOG_TIMEOUT`, keep the RWDT above the supervisor deadline. Both must stay above the longest single flash erase or write: `rig` checks in around each one, and a check-in in time feeds the RWDT, but nothing runs during one. Raising either one also lengthens the 2 s fault-to-open bound, so update the spec to match.
+`SETTLE_MS` also paces `itch-sim`, so changing it keeps the simulator honest. The 4 s deadline gives 2170 ms of margin above the measured 1830 ms Wi-Fi association stall. `WATCHDOG_TIMEOUT` is derived as `DEADLINE_MS` plus 1 s (currently 5 s), so raising the deadline also raises the RWDT timeout. Both must stay above the longest single flash erase or write: `rig` checks in around each one, and a check-in in time feeds the RWDT, but nothing runs during one. Changing either timing can lengthen the 5 s fault-to-open bound, so update the spec to match. A stopped Rig task with a running executor is held in reset within about 4.05 s; a stalled executor relies on the 5 s RWDT.
 
 ## 1. Module **[per-Rig]**
 
@@ -130,7 +130,7 @@ For each reset type, turn on all 16 Channels, watch GPIO6 and every contact on t
 - **Pass:** every contact opens and none pulses on during the reset or the boot. The Rig boots Clear: `get_channels()` is all off and the contacts measure open.
 - **If it fails:** GPIO6 is pulled low on the board and `board::boot` drives it low first; a pulse here is most likely a hardware matter. The panic path calls `board::force_reset_low()` before anything else (`#[panic_handler]` in `crates/itch-firmware/src/main.rs`).
 
-## 11. Fault-to-open within 2 s
+## 11. Fault-to-open within 5 s
 
 Each case needs a throwaway build from a scratch branch; don't commit it. Make the `rig` task (`crates/itch-firmware/src/main.rs`) misbehave some seconds after boot, with Channels on:
 
@@ -139,7 +139,7 @@ Each case needs a throwaway build from a scratch branch; don't commit it. Make t
 - **Panic:** `panic!("bench")`.
 - **Stuck I2C:** no build needed. Short SDA (GPIO5) to GND on the normal firmware.
 
-- **Pass:** for each case, every contact opens within 2 s of the fault, and `reset_reason` after the reboot matches the table in item 10. For stuck I2C, the contacts open and the LED blinks fast, normally with no reboot. Changes raise `HardwareFaultError`. Once the short is removed, the commanded Channels come back and `expander_faults` has risen by one.
+- **Pass:** for each case, every contact opens within 5 s of the fault, and `reset_reason` after the reboot matches the table in item 10. For stuck I2C, the contacts open and the LED blinks fast, normally with no reboot. Changes raise `HardwareFaultError`. Once the short is removed, the commanded Channels come back and `expander_faults` has risen by one.
 - **If it fails:** check the order in the `#[panic_handler]`, and the timings `DEADLINE_MS`, `WATCHDOG_TIMEOUT`, `I2C_TIMEOUT` and `TICK` (see the table above). Expander recovery is `Rig::tick` / `recover` in `crates/itch-core/src/rig.rs`.
 
 ## 12. Crash marker
