@@ -11,11 +11,22 @@ pub fn dirty(dir: &Path) -> bool {
 }
 
 /// Sets `ITCH_DIRTY` to `true` or `false` for the crate being built. Reruns
-/// when git's index or HEAD moves, or any crate's files change.
+/// when git's index or HEAD moves, a tracked file changes, or any crate's
+/// files change. New untracked files outside `crates/` are noticed only
+/// after one of those inputs changes; watching the root would scan build
+/// artifacts and ignored scratch state on every build.
 pub fn emit_dirty() {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("set by cargo"));
     println!("cargo:rustc-env=ITCH_DIRTY={}", dirty(&manifest));
     println!("cargo:rerun-if-changed=..");
+    if let Some(root) = git(&manifest, &["rev-parse", "--show-toplevel"]) {
+        let root = Path::new(root.trim());
+        if let Some(paths) = git(root, &["ls-files", "--full-name", "-z"]) {
+            for path in paths.split_terminator('\0') {
+                println!("cargo:rerun-if-changed={}", root.join(path).display());
+            }
+        }
+    }
     if let Some(git_dir) = git(&manifest, &["rev-parse", "--absolute-git-dir"]) {
         let git_dir = Path::new(git_dir.trim());
         println!("cargo:rerun-if-changed={}", git_dir.join("index").display());
