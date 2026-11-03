@@ -27,3 +27,11 @@ Before changing the protocol, coordinating work across repos, or handling CI or 
 ## Design priority
 
 itch is an internal tool, usually driven by one QA engineer with one script per Rig. Optimise for that engineer's experience over rare multi-client or failure edge cases; don't add errors, ceremony or client bookkeeping to guard against them. See `docs/adr/0004-optimise-for-one-qa-engineer.md`.
+
+## Enforced invariants
+
+| Rule | Enforcement |
+| --- | --- |
+| Credential diagnostics omit passphrases. | `Credentials` and `SetWifi` own redacted `Debug`; `crates/itch-core/tests/wifi.rs` checks direct and enclosing diagnostics. |
+| Blocking work preserves the Rig's check-in deadline. | `serve` bounds reply waits; `settings::Supervised` checks in around flash operations; firmware connection, supervisor, flash and Wi-Fi tests cover starvation and measured association stalls. |
+| Workflow checkouts keep credentials out of Git configuration. | CI runs `zizmor --offline --no-config .github/workflows`; its `artipacked` audit rejects persisted checkout credentials. |

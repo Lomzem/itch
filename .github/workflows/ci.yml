@@ -9,6 +9,15 @@ permissions:
   contents: read
 
 jobs:
+  workflow-lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - run: python3 -m pip install zizmor==1.30.1
+      - run: zizmor --offline --no-config .github/workflows
+
   host-tests:
     strategy:
       fail-fast: false
@@ -16,7 +25,7 @@ jobs:
         os: [ubuntu-24.04, windows-2025]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
@@ -28,7 +37,7 @@ jobs:
   core-no-std:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - run: rustup toolchain install stable --profile minimal --target thumbv7em-none-eabihf
@@ -42,10 +51,10 @@ jobs:
       # espup queries the GitHub API; unauthenticated calls hit rate limits.
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: esp-rs/xtensa-toolchain@v1.7.0
+      - uses: esp-rs/xtensa-toolchain@ec6d36527049a7f4fb2cb0c1a644668c1bb8a2a4 # v1.7.0
         with:
           buildtargets: esp32s3
           version: "1.97.0.0"
