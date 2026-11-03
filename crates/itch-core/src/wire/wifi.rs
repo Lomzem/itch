@@ -1,10 +1,12 @@
+use core::fmt;
+
 use super::codec::{Reader, Writer};
 use super::{DecodeError, MAX_HOLDER, MAX_PASSPHRASE, MAX_SSID};
 use crate::wifi::Credentials;
 
 /// Gives the Rig its Wi-Fi credentials, or clears them with an empty `ssid`
 /// and `passphrase`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct SetWifi<'a> {
     /// Empty = no Holder.
     pub holder: &'a str,
@@ -12,6 +14,17 @@ pub struct SetWifi<'a> {
     pub ssid: &'a str,
     /// 8 to 63 bytes, or empty with an empty `ssid`. Never reported back.
     pub passphrase: &'a str,
+}
+
+/// Keeps the passphrase out of diagnostics, including enclosing Requests
+/// and Messages that derive Debug.
+impl fmt::Debug for SetWifi<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("SetWifi")
+            .field("holder", &self.holder)
+            .field("ssid", &self.ssid)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<'a> SetWifi<'a> {

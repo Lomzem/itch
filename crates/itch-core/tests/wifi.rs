@@ -8,6 +8,19 @@ use itch_core::wire::{ErrorCode, Link, Message, Reply, Request, SetWifi, StatusR
 const SSID: &str = "ExampleRigNet";
 const PASSPHRASE: &str = "example-passphrase";
 
+#[test]
+fn credential_debug_output_keeps_the_network_but_hides_the_passphrase() {
+    let set = SetWifi { holder: "alice@ws3", ssid: SSID, passphrase: PASSPHRASE };
+    let request = Request::SetWifi(set);
+    let message = Message::Request { request_id: 7, request };
+    let credentials = set.credentials().unwrap();
+    for value in [&set as &dyn std::fmt::Debug, &request, &message, &credentials] {
+        let debug = format!("{value:?}");
+        assert!(debug.contains(SSID), "the network remains useful for diagnostics");
+        assert!(!debug.contains(PASSPHRASE), "Debug must omit the passphrase");
+    }
+}
+
 fn set_wifi<'a>(ssid: &'a str, passphrase: &'a str) -> Request<'a> {
     Request::SetWifi(SetWifi { holder: "", ssid, passphrase })
 }

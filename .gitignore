@@ -1,3 +1,4 @@
 /target
 .scratch/
 docs/hardware/schematics
+__pycache__/
