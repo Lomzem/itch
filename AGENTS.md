@@ -34,4 +34,4 @@ itch is an internal tool, usually driven by one QA engineer with one script per 
 | --- | --- |
 | Credential diagnostics omit passphrases. | `Credentials` and `SetWifi` own redacted `Debug`; `crates/itch-core/tests/wifi.rs` checks direct and enclosing diagnostics. |
 | Blocking work preserves the Rig's check-in deadline. | `serve` bounds reply waits; `settings::Supervised` checks in around flash operations; firmware connection, supervisor, flash and Wi-Fi tests cover starvation and measured association stalls. |
-| Workflow checkouts keep credentials out of Git configuration. | The `workflow-lint` CI job runs zizmor in auditor mode with ignores disabled; `artipacked` rejects persisted checkout credentials. |
+| Workflow checkouts keep credentials out of Git configuration. | The `workflow-lint` CI job runs `scripts/check-workflow-checkouts.py`, which requires literal `persist-credentials: false` on every checkout regardless of upload order; zizmor adds general workflow audits. |

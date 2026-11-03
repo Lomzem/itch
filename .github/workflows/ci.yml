@@ -19,7 +19,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - run: python3 -m pip install zizmor==1.30.1
+      - run: python3 -m pip install zizmor==1.30.1 PyYAML==6.0.3
+      - run: python3 -m unittest discover -s scripts/tests
+      - run: python3 scripts/check-workflow-checkouts.py
       - run: zizmor --offline --no-config --persona=auditor --no-ignores --min-severity=low .github/workflows
 
   host-tests:
